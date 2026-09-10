@@ -1,0 +1,35 @@
+[project]
+name = "dolphindb-extension"
+version = "0.1.0a1"
+description = "DolphinDB integration for JupyterLab and Jupyter Notebook (initial scaffold)."
+readme = "README.md"
+authors = [
+    { name = "realhuhu", email = "2661467107@qq.com" }
+]
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["dolphindb", "ddb", "jupyter", "jupyterlab", "notebook"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Framework :: Jupyter",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Database :: Front-Ends",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/realhuhu/dolphindb-extension"
+Repository = "https://github.com/realhuhu/dolphindb-extension"
+Issues = "https://github.com/realhuhu/dolphindb-extension/issues"
+Changelog = "https://github.com/realhuhu/dolphindb-extension/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dolphindb_extension"]

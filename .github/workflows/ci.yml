@@ -1,0 +1,38 @@
+name: Package checks
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+      - name: Check locked environment
+        run: uv sync --locked
+      - name: Build distributions
+        run: uv build --no-sources
+      - name: Check package metadata and README
+        run: uvx twine check --strict dist/*
+      - name: Verify isolated wheel installation
+        run: >-
+          uv run --isolated --no-project --with dist/*.whl
+          python -I -c "import dolphindb_extension; print(dolphindb_extension.__version__)"
+      - name: Verify isolated source distribution installation
+        run: >-
+          uv run --isolated --no-project --with dist/*.tar.gz
+          python -I -c "import dolphindb_extension; print(dolphindb_extension.__version__)"
