@@ -1,18 +1,21 @@
 import { Dialog, showDialog } from '@jupyterlab/apputils';
+import { settingsIcon } from '@jupyterlab/ui-components';
 import * as React from 'react';
 import { endpoint, type Draft, type Profile } from './api';
 import { ConnectionModel } from './model';
-
-const empty: Draft = { name: '', host: '', port: 8848, username: 'admin', password: '', ssl: false, timeout: 10, rememberPassword: false };
+import { sortConnections } from './settings';
 
 function DatabaseMark(): React.ReactElement {
   return <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><ellipse cx="20" cy="10" rx="13" ry="5"/><path d="M7 10v10c0 2.8 5.8 5 13 5s13-2.2 13-5V10M7 20v10c0 2.8 5.8 5 13 5s13-2.2 13-5V20"/></svg>;
 }
 
-export function ConnectionPanel({ model }: { model: ConnectionModel }): React.ReactElement {
+export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionModel; onOpenSettings: () => void }): React.ReactElement {
   const [, update] = React.useReducer(n => n + 1, 0);
   const [editing, setEditing] = React.useState<Profile | 'new' | null>(null);
   const [filter, setFilter] = React.useState('');
+  const { sidebar } = model.preferences.value;
+  const showSearch = sidebar.alwaysShowSearch || model.state.connections.length > 3;
+  React.useEffect(() => { if (!showSearch) { setFilter(''); } }, [showSearch]);
   React.useEffect(() => {
     const changed = () => update();
     model.changed.connect(changed);
@@ -25,7 +28,9 @@ export function ConnectionPanel({ model }: { model: ConnectionModel }): React.Re
   }, [model]);
 
   const active = model.state.connections.find(p => p.id === (model.current?.id || model.state.activeId));
-  const profiles = model.state.connections.filter(p => `${p.name} ${p.host} ${p.username}`.toLowerCase().includes(filter.toLowerCase()));
+  const query = showSearch ? filter.toLowerCase() : '';
+  const profiles = sortConnections(model.state.connections, sidebar.sortOrder)
+    .filter(p => `${p.name} ${p.host} ${p.username}`.toLowerCase().includes(query));
   const edit = (profile: Profile | 'new') => { model.notice = null; setEditing(profile); };
   const remove = async (profile: Profile) => {
     const result = await showDialog({
@@ -40,6 +45,7 @@ export function ConnectionPanel({ model }: { model: ConnectionModel }): React.Re
     <header className="ddb-header">
       <div className="ddb-brand"><span className="ddb-brand-mark"><DatabaseMark /></span><div><strong>DolphinDB</strong><span>CONNECTIONS</span></div></div>
       {!editing && <div className="ddb-tools">
+        <button className="ddb-icon-button" title="打开 DolphinDB 设置" aria-label="打开 DolphinDB 设置" onClick={onOpenSettings}><settingsIcon.react width="16" height="16" /></button>
         <button className="ddb-icon-button" title="刷新连接列表" aria-label="刷新连接列表" disabled={Boolean(model.busy)} onClick={() => void model.refresh()}>↻</button>
         <button className="ddb-icon-button ddb-add" title="新增连接" aria-label="新增连接" disabled={Boolean(model.busy)} onClick={() => edit('new')}>＋</button>
       </div>}
@@ -55,7 +61,7 @@ export function ConnectionPanel({ model }: { model: ConnectionModel }): React.Re
         </> : <span className="ddb-current-detail">{active ? '点击下方连接，继续工作。' : '配置服务器，开始使用 DolphinDB。'}</span>}
       </div>
       <div className="ddb-list-heading"><h2>已保存的连接 <span>{model.state.connections.length}</span></h2></div>
-      {model.state.connections.length > 3 && <input className="ddb-search" aria-label="搜索连接" placeholder="搜索名称或地址…" value={filter} onChange={e => setFilter(e.target.value)} />}
+      {showSearch && <input className="ddb-search" aria-label="搜索连接" placeholder="搜索名称或地址…" value={filter} onChange={e => setFilter(e.target.value)} />}
       <div className="ddb-list">
         {!model.loaded && !model.notice ? <p className="ddb-loading" role="status">正在加载连接…</p> : model.loaded && !model.state.connections.length ? <div className="ddb-empty">
           <DatabaseMark /><h3>添加第一个连接</h3><p>填写服务器地址和登录信息，<br />连接配置会自动保存。</p>
@@ -66,7 +72,7 @@ export function ConnectionPanel({ model }: { model: ConnectionModel }): React.Re
           return <article className={`ddb-connection ${selected ? 'is-selected' : ''}`} key={profile.id} aria-label={`连接 ${profile.name}`}>
             <div className="ddb-connection-title"><h3>{profile.name}</h3>{selected && <span className="ddb-badge">当前</span>}</div>
             <code className="ddb-endpoint">{endpoint(profile)}</code>
-            <div className="ddb-connection-meta"><span>{profile.username || '匿名用户'}</span><span>{profile.ssl ? 'SSL' : '标准连接'}</span></div>
+            {sidebar.showConnectionDetails && <div className="ddb-connection-meta"><span>{profile.username || '匿名用户'}</span><span>{profile.ssl ? 'SSL' : '标准连接'}</span></div>}
             <div className="ddb-connection-actions">
               <button className={`ddb-button ${selected ? 'ddb-selected-button' : ''}`} disabled={Boolean(model.busy) || selected} onClick={() => void model.connect(profile)}>{connecting ? '连接中…' : selected ? '✓ 已连接' : model.connected ? '切换连接' : '连接'}</button>
               <button className="ddb-text-button" disabled={Boolean(model.busy)} aria-label={`编辑 ${profile.name}`} onClick={() => edit(profile)}>编辑</button>
@@ -74,7 +80,7 @@ export function ConnectionPanel({ model }: { model: ConnectionModel }): React.Re
             </div>
           </article>;
         })}
-        {filter && !profiles.length && <p className="ddb-loading">没有匹配的连接。</p>}
+        {query && !profiles.length && <p className="ddb-loading">没有匹配的连接。</p>}
       </div>
       <footer className="ddb-footer">连接地址由 Jupyter 所在机器访问。</footer>
     </>}
@@ -82,7 +88,7 @@ export function ConnectionPanel({ model }: { model: ConnectionModel }): React.Re
 }
 
 function ConnectionForm({ profile, model, onClose }: { profile?: Profile; model: ConnectionModel; onClose: () => void }): React.ReactElement {
-  const [draft, setDraft] = React.useState<Draft>(profile ? { ...profile, password: undefined } : { ...empty });
+  const [draft, setDraft] = React.useState<Draft>(() => profile ? { ...profile, password: undefined } : model.preferences.createDraft());
   const [keepPassword, setKeepPassword] = React.useState(Boolean(profile?.hasPassword));
   const [showPassword, setShowPassword] = React.useState(false);
   const form = React.useRef<HTMLFormElement>(null);

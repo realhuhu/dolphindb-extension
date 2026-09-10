@@ -19,6 +19,8 @@ from uuid import UUID, uuid4
 import keyring
 from keyring.errors import KeyringError, PasswordDeleteError
 
+AUTH_RESOURCE = "dolphindb-extension:connections"
+
 
 class ConnectionError(Exception):
     """A safe, user-facing failure; never includes credentials or SDK errors."""
@@ -77,10 +79,11 @@ def validate_profile(data: Any, connection_id: str) -> dict[str, Any]:
 
 
 class ProfileStore:
-    """Atomically persist non-secret configuration in the Jupyter user's data directory."""
+    """Atomically persist profiles and the non-secret keyring namespace they use."""
 
     def __init__(self, directory: Path):
         self.path = directory / "connections.json"
+        self.credential_service: str | None = None
 
     def load(self) -> tuple[list[dict[str, Any]], str | None]:
         if not self.path.exists():
@@ -89,6 +92,12 @@ class ProfileStore:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
             if saved["version"] != 1 or not isinstance(saved["connections"], list):
                 raise ValueError("Unknown configuration format")
+            service = saved.get("credentialService")
+            if service is not None and (
+                not isinstance(service, str) or not re.fullmatch(r"dolphindb-extension/[0-9a-f]{24}", service)
+            ):
+                raise ValueError("Invalid credential namespace")
+            self.credential_service = service
             profiles = []
             for entry in saved["connections"]:
                 connection_id = str(UUID(entry["id"]))
@@ -100,17 +109,22 @@ class ProfileStore:
             return profiles, active if active in ids else None
         except (OSError, ValueError, KeyError, TypeError, ConnectionError):
             raise ConnectionError(
-                "无法读取连接配置。请检查 Jupyter 数据目录中的 connections.json。", 500
+                "无法读取连接配置。请检查连接配置目录中的 connections.json。", 500
             ) from None
 
     def save(self, profiles: list[dict[str, Any]], active: str | None) -> None:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         temporary: str | None = None
         try:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             fd, temporary = tempfile.mkstemp(dir=self.path.parent, prefix=".connections-")
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(
-                    {"version": 1, "connections": profiles, "activeId": active},
+                    {
+                        "version": 1,
+                        "connections": profiles,
+                        "activeId": active,
+                        "credentialService": self.credential_service,
+                    },
                     handle,
                     ensure_ascii=False,
                     indent=2,
@@ -120,18 +134,28 @@ class ProfileStore:
                 os.fsync(handle.fileno())
             os.replace(temporary, self.path)
         except OSError:
-            raise ConnectionError("无法保存连接配置，请检查 Jupyter 数据目录的写入权限。", 500) from None
+            raise ConnectionError("无法保存连接配置，请检查连接配置目录的写入权限。", 500) from None
         finally:
             if temporary and os.path.exists(temporary):
                 os.unlink(temporary)
+
+    def migrate_from(self, directory: Path) -> bool:
+        """Copy a legacy store once, retaining the original and its keyring identity."""
+        source = ProfileStore(directory)
+        if self.path.exists() or not source.path.exists():
+            return False
+        profiles, active = source.load()
+        self.credential_service = source.credential_service or Credentials(directory).service
+        self.save(profiles, active)
+        return True
 
 
 class Credentials:
     """Keep passwords in memory unless the user opts into the OS keyring."""
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, service: str | None = None):
         namespace = hashlib.sha256(str(directory.resolve()).encode()).hexdigest()[:24]
-        self.service = f"dolphindb-extension/{namespace}"
+        self.service = service or f"dolphindb-extension/{namespace}"
         self.memory: dict[str, str] = {}
 
     @property
@@ -184,10 +208,12 @@ class Credentials:
 class ConnectionManager:
     """Configuration and relay tickets; the upstream JS SDK owns actual DDB sessions."""
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, *, legacy_directory: Path | None = None):
         self.store = ProfileStore(directory)
+        self.migrated = bool(legacy_directory and self.store.migrate_from(legacy_directory))
         self.profiles, self.active_id = self.store.load()
-        self.credentials = Credentials(directory)
+        self.credentials = Credentials(directory, self.store.credential_service)
+        self.store.credential_service = self.credentials.service
         self.lock = asyncio.Lock()
         self.tickets: dict[str, tuple[float, dict[str, Any]]] = {}
         self.sockets: set[Any] = set()

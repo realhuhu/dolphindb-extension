@@ -8,11 +8,11 @@ from jupyter_server.base.websocket import WebSocketMixin
 from tornado import web
 from tornado.websocket import WebSocketClosedError, WebSocketHandler, websocket_connect
 
-from .connections import ConnectionError
+from .connections import AUTH_RESOURCE, ConnectionError
 
 
 class DolphinDBRelay(WebSocketMixin, WebSocketHandler, JupyterHandler):
-    auth_resource = "dolphindb-connections"
+    auth_resource = AUTH_RESOURCE
 
     def initialize(self, manager):
         self.manager = manager

@@ -13,10 +13,18 @@
     "get_version",
     "check_client_auth"
   ],
+  "executionHelpers": [
+    "load_table_variable_schema",
+    "peek_table",
+    "load_table_schema",
+    "load_database_schema"
+  ],
+  "commandsSha256": "ff93b919bc417976c2b64b8f11836cb4aae9264178496cc9ed1e8384fe686d3b",
   "adaptations": [
     "Use browser SDK entry points",
     "Remove VS Code presentation/logging",
     "Explicit strict TypeScript types",
-    "Use String.split instead of String.slice_to"
+    "Use String.split instead of String.slice_to",
+    "Route execute() print events to a per-document output callback"
   ]
 }

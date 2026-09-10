@@ -38,6 +38,33 @@ async def test_malformed_body_is_rejected(jp_fetch):
     assert error.value.code == 400
 
 
+async def test_namespaced_authorization_for_http_and_websocket(
+    jp_serverapp, jp_fetch, jp_ws_fetch, monkeypatch
+):
+    allowed = {"read", "write"}
+    calls = []
+
+    def authorize(handler, user, action, resource):
+        calls.append((action, resource))
+        return resource == "dolphindb-extension:connections" and action in allowed
+
+    monkeypatch.setattr(jp_serverapp.authorizer, "is_authorized", authorize)
+    assert (await jp_fetch("dolphindb-extension", "connections")).code == 200
+    data = json.dumps({"name": "Authorization test", "host": "localhost"})
+    assert (await jp_fetch("dolphindb-extension", "connections", method="POST", body=data)).code == 201
+    with pytest.raises(HTTPClientError) as error:
+        await jp_fetch("dolphindb-extension", "sessions", method="POST", body=data)
+    assert error.value.code == 403
+    allowed.add("execute")
+    response = await jp_fetch("dolphindb-extension", "sessions", method="POST", body=data)
+    allowed.remove("execute")
+    with pytest.raises(HTTPClientError) as error:
+        await jp_ws_fetch(json.loads(response.body)["path"])
+    assert error.value.code == 403
+    assert {resource for _, resource in calls} == {"dolphindb-extension:connections"}
+    assert {action for action, _ in calls} == {"read", "write", "execute"}
+
+
 class EchoSocket(WebSocketHandler):
     def on_message(self, message):
         self.write_message(message, binary=isinstance(message, bytes))

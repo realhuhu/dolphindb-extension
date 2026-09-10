@@ -4,12 +4,16 @@
   "description": "Visual DolphinDB connection management for Jupyter",
   "license": "Apache-2.0",
   "private": true,
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "style": "style/index.css",
   "styleModule": "style/index.js",
   "files": [
     "lib/**/*",
+    "schema/**/*.json",
     "style/**/*"
   ],
   "sideEffects": [
@@ -19,17 +23,32 @@
   "scripts": {
     "build": "tsc && jupyter-builder build .",
     "build:prod": "npm run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs"
   },
   "dependencies": {
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
     "@jupyterlab/application": "^4.2.0",
     "@jupyterlab/apputils": "^4.2.0",
+    "@jupyterlab/codeeditor": "^4.2.0",
+    "@jupyterlab/codemirror": "^4.2.0",
+    "@jupyterlab/completer": "^4.2.0",
     "@jupyterlab/coreutils": "^6.2.0",
+    "@jupyterlab/docmanager": "^4.2.0",
+    "@jupyterlab/docregistry": "^4.2.0",
+    "@jupyterlab/filebrowser": "^4.2.0",
+    "@jupyterlab/fileeditor": "^4.2.0",
+    "@jupyterlab/launcher": "^4.2.0",
+    "@jupyterlab/running": "^4.2.0",
     "@jupyterlab/services": "^7.2.0",
+    "@jupyterlab/settingregistry": "^4.2.0",
     "@jupyterlab/ui-components": "^4.2.0",
     "@lumino/coreutils": "^2.2.3",
+    "@lumino/disposable": "^2.1.6",
     "@lumino/messaging": "^2.0.0",
     "@lumino/signaling": "^2.1.6",
+    "@lumino/widgets": "^2.3.0",
     "dolphindb": "3.1.41",
     "react": "^18.3.1",
     "xshell": "1.3.48"
@@ -41,6 +60,7 @@
   },
   "jupyterlab": {
     "extension": true,
+    "schemaDir": "schema",
     "outputDir": "src/dolphindb_extension/labextension",
     "discovery": {
       "server": {

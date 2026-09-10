@@ -1,0 +1,373 @@
+import { Signal } from '@lumino/signaling';
+import { DdbObj, urgent } from 'dolphindb/browser.js';
+import { request, type Profile, type SessionTicket } from '../api';
+import type { ConnectionModel } from '../model';
+import type { DdbConnection } from '../upstream/connection';
+import { displayValue, executeInSession, loadDatabases, loadVariables, openSdk, previewConnection, tablePreview, type DatabaseEntry, type DisplayValue, type VariableEntry } from './runtime';
+
+export interface SessionInfo {
+  id: string; path: string; profile: Profile; locked: boolean; attached: boolean;
+  state: 'starting' | 'idle' | 'busy' | 'disconnected'; executionCount: number;
+}
+interface SavedRun {
+  id: number; code: string; line: string; started: string; finished: string | null;
+  status: string; frames: string[]; truncated: boolean;
+}
+export interface OutputEntry {
+  id: string; label: string; status: string; prints: string[]; value?: DisplayValue; error?: string; elapsed?: number;
+}
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/([?&]token=)[^&\s]+/g, '$1[redacted]');
+
+function restoreRun(run: SavedRun): OutputEntry {
+  const output: OutputEntry = { id: String(run.id), label: `执行 ${run.id} · 第 ${run.line} 行`, status: run.status, prints: [] };
+  for (const frame of run.frames) {
+    try {
+      const data = Uint8Array.from(atob(frame), c => c.charCodeAt(0));
+      const decoder = new TextDecoder();
+      if (decoder.decode(data.subarray(0, 4)) === 'MSG\n') { output.prints.push(decoder.decode(data.subarray(4, -1))); continue; }
+      const first = data.indexOf(10), second = data.indexOf(10, first + 1);
+      const status = decoder.decode(data.subarray(first + 1, second));
+      if (status !== 'OK') { output.error = status; }
+      else { output.value = displayValue(DdbObj.parse(data.subarray(second + 1), decoder.decode(data.subarray(0, first)).split(' ')[2] !== '0')); }
+    } catch { output.error = '此结果无法恢复，请查看后续输出。'; }
+  }
+  if (run.truncated) { output.prints.push('历史输出达到保存上限，部分内容已省略。'); }
+  if (run.finished) { output.elapsed = Date.parse(run.finished) - Date.parse(run.started); }
+  return output;
+}
+
+export class DosModel {
+  readonly changed = new Signal<this, void>(this);
+  session: SessionInfo | null = null;
+  connection: DdbConnection | null = null;
+  private preview: DdbConnection | null = null;
+  private generation = 0;
+  private selectedId: string | null = null;
+  private followsDefault = true;
+  private initializing: Promise<void> | null = null;
+  private attaching: Promise<void> | null = null;
+  private views = 0;
+  private loadedHistory = -1;
+  busy = false;
+  loading = false;
+  notice: string | null = null;
+  databaseError: string | null = null;
+  variablesError: string | null = null;
+  pathError = false;
+  databases: DatabaseEntry[] = [];
+  variables: VariableEntry[] = [];
+  outputs: OutputEntry[] = [];
+
+  constructor(public path: string, readonly manager: DosManager) {}
+
+  get locked(): boolean { return Boolean(this.session?.locked); }
+  get profile(): Profile | undefined {
+    return this.session?.profile ?? (this.followsDefault ? this.manager.defaultProfile
+      : this.manager.connections.state.connections.find(p => p.id === this.selectedId));
+  }
+  get executing(): boolean { return this.busy || this.session?.state === 'busy'; }
+  get status(): string {
+    return this.executing ? '运行中' : this.session?.state === 'disconnected' ? '已断开'
+      : this.loading ? '连接中' : this.locked ? '会话就绪' : '尚未运行';
+  }
+  get sdk(): DdbConnection | null { return this.connection ?? this.preview; }
+
+  open(): void {
+    this.views++;
+    void this.initialize();
+  }
+  closeView(): void {
+    this.views = Math.max(0, this.views - 1);
+    if (!this.views && !this.session) {
+      this.generation++;
+      this.preview?.disconnect();
+      this.preview = null;
+      this.loading = false;
+      this.initializing = null;
+      this.changed.emit();
+    }
+  }
+  initialize(): Promise<void> {
+    return this.initializing ??= (async () => {
+      await this.manager.ready;
+      if (!this.views) { return; }
+      const existing = this.manager.sessions.find(s => s.path === this.path);
+      if (existing) { this.session = existing; await this.restore(); }
+      else if (this.followsDefault) { await this.useDefault(); }
+      else { await this.loadPreview(); }
+    })().catch(error => { this.notice = errorText(error); this.changed.emit(); });
+  }
+
+  async useDefault(): Promise<void> {
+    if (!this.followsDefault || this.session || this.busy) { return; }
+    const id = this.manager.defaultProfile?.id ?? null;
+    if (id !== this.selectedId || (!this.preview && !this.loading)) {
+      this.selectedId = id;
+      await this.loadPreview();
+    }
+  }
+
+  async select(id: string): Promise<void> {
+    if (this.locked || this.busy || this.session) { throw new Error('首次运行后连接已固定，请先关闭会话。'); }
+    this.selectedId = id;
+    this.followsDefault = false;
+    await this.loadPreview();
+  }
+
+  async loadPreview(): Promise<void> {
+    // A cached document can follow default changes without holding a socket.
+    if (!this.views || this.session || this.busy) { return; }
+    const generation = ++this.generation;
+    this.preview?.disconnect();
+    this.preview = null;
+    this.databases = [];
+    this.variables = [];
+    this.databaseError = null;
+    this.notice = null;
+    const profile = this.profile;
+    if (!profile) { this.loading = false; this.changed.emit(); return; }
+    this.loading = true;
+    this.changed.emit();
+    let preview: DdbConnection | null = null;
+    try {
+      preview = await previewConnection(profile.id, profile.name);
+      if (generation !== this.generation) { preview.disconnect(); return; }
+      // Track the socket while metadata is pending so closing the view releases it.
+      this.preview = preview;
+      const databases = await loadDatabases(preview);
+      if (generation !== this.generation) { preview.disconnect(); return; }
+      this.databases = databases;
+    } catch (error) {
+      preview?.disconnect();
+      if (generation === this.generation) { this.preview = null; this.databaseError = errorText(error); }
+    } finally {
+      if (generation === this.generation) { this.loading = false; this.changed.emit(); }
+    }
+  }
+
+  async restore(force = false): Promise<void> {
+    if (this.attaching) { await this.attaching; return; }
+    const session = this.session;
+    if (!session || (this.busy && !force)) { return; }
+    if (session.state === 'busy') { this.changed.emit(); return; }
+    this.attaching = (async () => {
+      this.loading = true;
+      this.changed.emit();
+      const detail = await request<SessionInfo & { history: SavedRun[] }>(`dos-sessions/${session.id}`);
+      this.session = detail;
+      if (this.loadedHistory !== detail.executionCount) {
+        this.outputs = detail.history.map(restoreRun);
+        this.loadedHistory = detail.executionCount;
+      }
+      if (detail.state === 'disconnected') { return; }
+      if (!this.connection?.ddb.connected) {
+        this.connection = await openSdk(await request<SessionTicket>(`dos-sessions/${session.id}/attach`, 'POST'), detail.profile.name);
+        await this.refreshMetadata();
+      }
+    })().catch(error => { this.notice = errorText(error); }).finally(() => {
+      this.loading = false; this.attaching = null; this.changed.emit();
+    });
+    await this.attaching;
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (this.session) {
+      await this.restore(true);
+      if (!this.connection?.ddb.connected) { throw new Error('会话不可用，请从正在运行面板关闭旧会话后重试。'); }
+      return;
+    }
+    const profile = this.profile;
+    if (!profile) { throw new Error('请先在连接侧栏配置并选择默认连接。'); }
+    this.generation++;
+    this.preview?.disconnect();
+    this.preview = null;
+    this.session = await request<SessionInfo>('dos-sessions', 'POST', { path: this.path, connectionId: profile.id });
+    try {
+      const ticket = await request<SessionTicket>(`dos-sessions/${this.session.id}/attach`, 'POST');
+      this.connection = await openSdk(ticket, profile.name);
+    } catch (error) {
+      if (!this.session.locked) { await request(`dos-sessions/${this.session.id}`, 'DELETE'); this.session = null; }
+      throw error;
+    }
+  }
+
+  async run(code: string, line = 0): Promise<boolean> {
+    if (!code.trim()) { return true; }
+    if (this.executing || this.pathError) { this.notice = '此文件正在运行或路径尚未同步，请稍后重试。'; this.changed.emit(); return false; }
+    await this.initialize();
+    if (this.executing) { return false; }
+    this.busy = true;
+    this.notice = null;
+    this.changed.emit();
+    let output: OutputEntry | null = null;
+    let success = false;
+    const started = performance.now();
+    try {
+      await this.ensureSession();
+      const session = this.session!;
+      session.locked = true;
+      session.state = 'busy';
+      output = { id: `run-${Date.now()}`, label: `执行 ${session.executionCount + 1} · 第 ${line + 1} 行`, status: 'running', prints: [] };
+      this.outputs = [...this.outputs.slice(-19), output];
+      this.changed.emit();
+      output.value = displayValue(await executeInSession(this.connection!, code, line, text => {
+        if (output!.prints.join('\n').length < 200_000) { output!.prints.push(text); }
+        this.changed.emit();
+      }));
+      output.status = 'ok';
+      success = true;
+    } catch (error) {
+      const message = errorText(error);
+      if (output) { output.error = message; output.status = 'error'; }
+      else { this.notice = message; }
+    } finally {
+      if (output) { output.elapsed = performance.now() - started; }
+      if (this.session) {
+        const detail = await request<SessionInfo>(`dos-sessions/${this.session.id}`).catch(() => null);
+        if (detail) { this.session = detail; this.loadedHistory = detail.executionCount; }
+        await this.refreshMetadata();
+      }
+      this.busy = false;
+      this.loading = false;
+      if (this.notice?.startsWith('已发送中断请求')) { this.notice = null; }
+      if (!this.session && this.views) { void this.useDefault(); }
+      this.changed.emit();
+      await this.manager.refresh();
+    }
+    return success;
+  }
+
+  async refreshMetadata(): Promise<void> {
+    if (!this.connection?.ddb.connected) { return; }
+    const connection = this.connection;
+    const results = await Promise.allSettled([loadDatabases(connection), loadVariables(connection.ddb)]);
+    if (connection !== this.connection) { return; }
+    if (results[0].status === 'fulfilled') { this.databases = results[0].value; this.databaseError = null; }
+    else { this.databaseError = errorText(results[0].reason); }
+    if (results[1].status === 'fulfilled') { this.variables = results[1].value; this.variablesError = null; }
+    else { this.variablesError = errorText(results[1].reason); }
+    this.changed.emit();
+  }
+
+  async refreshPanels(): Promise<void> {
+    if (this.executing || this.loading) { return; }
+    if (this.locked) { await this.refreshMetadata(); }
+    else { await this.loadPreview(); }
+  }
+
+  async inspectTable(database: string, table: string): Promise<void> {
+    if (this.executing || !this.sdk) { return; }
+    const connection = this.sdk;
+    try {
+      const value = await tablePreview(connection, database, table);
+      if (connection !== this.sdk) { return; }
+      this.outputs = [...this.outputs.slice(-19), { id: `table-${Date.now()}`, label: `${table} · 前 100 行`, status: 'ok', prints: [], value }];
+    } catch (error) { this.notice = errorText(error); }
+    this.changed.emit();
+  }
+
+  async interrupt(): Promise<void> {
+    if (!this.session || !this.executing) { return; }
+    let control: DdbConnection | null = null;
+    try {
+      const ticket = await request<SessionTicket>(`dos-sessions/${this.session.id}/control`, 'POST');
+      control = await openSdk(ticket, this.session.profile.name, false);
+      const sid = this.connection?.ddb.sid;
+      if (!sid || !/^\d+$/.test(sid)) { throw new Error('等待当前页面恢复会话后再中断，或直接关闭会话。'); }
+      // Same getConsoleJobs/cancelConsoleJob flow used by the upstream SDK's cancel().
+      await control.ddb.eval(`jobs = exec rootJobId from getConsoleJobs() where sessionId = ${sid}\nif (size(jobs))\n    cancelConsoleJob(jobs)\n`, urgent);
+      if (this.executing) { this.notice = '已发送中断请求，正在等待服务器停止执行。'; }
+    } catch (error) { this.notice = errorText(error); }
+    finally { control?.disconnect(); this.changed.emit(); }
+  }
+
+  async rename(path: string): Promise<void> {
+    const previous = this.path;
+    try {
+      if (this.session) { this.session = await request<SessionInfo>(`dos-sessions/${this.session.id}`, 'PATCH', { path }); }
+      this.path = path;
+      this.pathError = false;
+      this.manager.documents.delete(previous);
+      this.manager.documents.set(path, this);
+    } catch (error) { this.pathError = true; this.notice = errorText(error); }
+    this.changed.emit();
+  }
+
+  reset(): void {
+    this.generation++;
+    this.connection?.disconnect();
+    this.preview?.disconnect();
+    this.connection = this.preview = null;
+    this.session = null;
+    this.initializing = null;
+    this.followsDefault = true;
+    this.selectedId = this.manager.defaultProfile?.id ?? null;
+    this.variables = [];
+    this.databases = [];
+    this.databaseError = this.variablesError = null;
+    this.loadedHistory = -1;
+    this.notice = '会话已关闭；下次运行将创建新会话。';
+    this.changed.emit();
+    if (this.views && !this.busy) { void this.loadPreview(); }
+  }
+}
+
+export class DosManager {
+  readonly changed = new Signal<this, void>(this);
+  readonly documents = new Map<string, DosModel>();
+  sessions: SessionInfo[] = [];
+  readonly ready: Promise<void>;
+  private refreshing: Promise<void> | null = null;
+
+  constructor(readonly connections: ConnectionModel) {
+    this.ready = (async () => { await connections.refresh(); await this.refresh(); })();
+    connections.changed.connect(() => {
+      for (const model of this.documents.values()) { void model.useDefault(); model.changed.emit(); }
+    });
+    window.setInterval(() => { void this.refresh(); }, 2500);
+  }
+
+  document(path: string): DosModel {
+    let model = this.documents.get(path);
+    if (!model) { model = new DosModel(path, this); this.documents.set(path, model); }
+    return model;
+  }
+
+  get defaultProfile(): Profile | undefined {
+    const state = this.connections.state;
+    return state.connections.find(p => p.id === state.activeId) ?? state.connections[0];
+  }
+
+  /** Resolve the execution target for batch confirmation without opening a document. */
+  profileFor(path: string): Profile | undefined {
+    const session = this.sessions.find(s => s.path === path);
+    if (session) { return session.profile; }
+    const model = this.documents.get(path);
+    return model ? model.profile : this.defaultProfile;
+  }
+
+  refresh(): Promise<void> {
+    return this.refreshing ??= (async () => {
+      this.sessions = (await request<{ sessions: SessionInfo[] }>('dos-sessions')).sessions;
+      for (const model of this.documents.values()) {
+        if (!model.session || model.busy) { continue; }
+        const info = this.sessions.find(s => s.id === model.session!.id);
+        if (!info) { model.reset(); }
+        else {
+          const changed = model.session.state !== info.state;
+          model.session = info;
+          if (!model.connection?.ddb.connected && !info.attached && info.state === 'idle') { void model.restore(); }
+          if (changed) { model.changed.emit(); }
+        }
+      }
+      this.changed.emit();
+    })().catch(() => { /* Keep the last state while Jupyter is temporarily unreachable. */ })
+      .finally(() => { this.refreshing = null; });
+  }
+
+  async shutdown(id: string): Promise<void> {
+    await request(`dos-sessions/${id}`, 'DELETE');
+    for (const model of this.documents.values()) { if (model.session?.id === id) { model.reset(); } }
+    await this.refresh();
+  }
+}

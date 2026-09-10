@@ -10,7 +10,7 @@ from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 from tornado import web
 
-from .connections import ConnectionError, ConnectionManager
+from .connections import AUTH_RESOURCE, ConnectionError, ConnectionManager
 
 
 def connection_errors(method):
@@ -26,7 +26,7 @@ def connection_errors(method):
 
 
 class BaseHandler(APIHandler):
-    auth_resource = "dolphindb-connections"
+    auth_resource = AUTH_RESOURCE
 
     def initialize(self, manager: ConnectionManager) -> None:
         self.manager = manager

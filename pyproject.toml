@@ -13,6 +13,9 @@ keywords = ["dolphindb", "ddb", "jupyter", "jupyterlab", "notebook"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Jupyter",
+    "Framework :: Jupyter :: JupyterLab",
+    "Framework :: Jupyter :: JupyterLab :: 4",
+    "Framework :: Jupyter :: JupyterLab :: Extensions",
     "Framework :: Jupyter :: JupyterLab :: Extensions :: Prebuilt",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -44,13 +47,13 @@ packages = ["src/dolphindb_extension"]
 "jupyter-config/jupyter_server_config.d" = "etc/jupyter/jupyter_server_config.d"
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "frontend", "style", "scripts", "tests", "jupyter-config", "package.json", "package-lock.json", "tsconfig.json", "install.json", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "uv.lock", ".python-version"]
+include = ["src", "frontend", "schema", "style", "scripts", "tests", "jupyter-config", "package.json", "package-lock.json", "tsconfig.json", "install.json", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "uv.lock", ".python-version"]
 artifacts = ["src/dolphindb_extension/labextension"]
 
 [tool.hatch.build.hooks.jupyter-builder]
 build-function = "hatch_jupyter_builder.npm_builder"
-ensured-targets = ["src/dolphindb_extension/labextension/package.json", "src/dolphindb_extension/labextension/static/style.js"]
-skip-if-exists = ["src/dolphindb_extension/labextension/static/style.js"]
+ensured-targets = ["src/dolphindb_extension/labextension/package.json", "src/dolphindb_extension/labextension/static/style.js", "src/dolphindb_extension/labextension/schemas/dolphindb-extension/settings.json"]
+skip-if-exists = ["src/dolphindb_extension/labextension/static/style.js", "src/dolphindb_extension/labextension/schemas/dolphindb-extension/settings.json"]
 
 [tool.hatch.build.hooks.jupyter-builder.build-kwargs]
 build_cmd = "build:prod"

@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DolphinDB",
+  "description": "DolphinDB 的连接默认值与侧栏显示设置。修改后即时生效；新增连接默认值只影响随后打开的新建表单。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "connectionDefaults": {
+      "title": "新增连接默认值",
+      "description": "预填新增连接表单。已有连接和正在编辑的表单保留各自的配置。",
+      "type": "object",
+      "additionalProperties": false,
+      "default": { "port": 8848, "username": "admin", "timeout": 10, "ssl": false },
+      "properties": {
+        "port": {
+          "title": "默认端口",
+          "description": "DolphinDB 服务器的 WebSocket 端口。",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8848
+        },
+        "username": {
+          "title": "默认用户名",
+          "description": "留空表示匿名连接。每个连接仍可单独设置用户名。",
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f]*$",
+          "default": "admin"
+        },
+        "timeout": {
+          "title": "默认连接超时（秒）",
+          "description": "测试或建立连接的等待时间，范围为 1–60 秒。",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60,
+          "default": 10
+        },
+        "ssl": {
+          "title": "默认启用 SSL",
+          "description": "在新增连接表单中默认勾选 SSL。服务器需要支持加密 WebSocket。",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "sidebar": {
+      "title": "侧栏显示",
+      "type": "object",
+      "additionalProperties": false,
+      "default": { "sortOrder": "saved", "showConnectionDetails": true, "alwaysShowSearch": false },
+      "properties": {
+        "sortOrder": {
+          "title": "连接排序",
+          "description": "只调整侧栏显示顺序，保留已保存配置的顺序。",
+          "type": "string",
+          "enum": ["saved", "name", "host"],
+          "enumNames": ["添加顺序", "连接名称", "服务器地址"],
+          "default": "saved"
+        },
+        "showConnectionDetails": {
+          "title": "显示连接详情",
+          "description": "在连接卡片中显示用户名及 SSL 状态。",
+          "type": "boolean",
+          "default": true
+        },
+        "alwaysShowSearch": {
+          "title": "始终显示搜索框",
+          "description": "默认仅在已保存的连接超过 3 个时显示搜索框。",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

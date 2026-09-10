@@ -35,6 +35,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
     { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
     settings
   );
+  if (response.status === 204) { return undefined as T; }
   let data: { message?: string };
   try {
     data = await response.json();

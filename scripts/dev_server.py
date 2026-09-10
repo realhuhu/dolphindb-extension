@@ -24,7 +24,8 @@ config.write_text(
     "c.ServerApp.open_browser = False\n"
     "c.ServerApp.jpserver_extensions = {'dolphindb_extension': True}\n"
     f"c.ServerApp.root_dir = {str(QA / 'workspace')!r}\n"
-    f"c.DolphinDBExtensionApp.data_dir = {str(QA / 'connections')!r}\n"
+    f"c.DolphinDBExtensionApp.connections_dir = {str(QA / 'connections')!r}\n"
+    f"c.LabServerApp.user_settings_dir = {str(QA / 'settings')!r}\n"
     f"c.IdentityProvider.token = {token!r}\n",
     encoding="utf-8",
 )

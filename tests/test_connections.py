@@ -159,3 +159,73 @@ async def test_missing_saved_password_can_be_replaced_or_deleted(manager, data, 
     manager.credentials.memory.clear()
     await manager.delete(profile["id"])
     assert not manager.profiles
+
+
+async def test_legacy_migration_preserves_selection_password_and_original(manager, data, tmp_path):
+    profile = (await manager.save({**data, "rememberPassword": True}))["connections"][0]
+    await manager.select(profile["id"])
+    # Version 0.1.0a2 derived the keyring namespace from the old directory.
+    saved = json.loads(manager.store.path.read_text(encoding="utf-8"))
+    saved.pop("credentialService")
+    manager.store.path.write_text(json.dumps(saved), encoding="utf-8")
+    original = manager.store.path.read_bytes()
+    manager.close()
+    destination = tmp_path / "new-config"
+    migrated = ConnectionManager(destination, legacy_directory=tmp_path)
+    try:
+        assert migrated.migrated
+        assert migrated.active_id == profile["id"]
+        assert migrated.credentials.get(migrated.find(profile["id"])) == data["password"]
+        assert data["password"] not in migrated.store.path.read_text(encoding="utf-8")
+        assert manager.store.path.read_bytes() == original
+    finally:
+        migrated.close()
+    restarted = ConnectionManager(destination)
+    try:
+        assert restarted.credentials.get(restarted.find(profile["id"])) == data["password"]
+    finally:
+        restarted.close()
+
+
+async def test_migration_never_overwrites_existing_destination(manager, data, tmp_path):
+    await manager.save(data)
+    destination = tmp_path / "configured"
+    target = ProfileStore(destination)
+    target.save([], None)
+    original = target.path.read_bytes()
+    migrated = ConnectionManager(destination, legacy_directory=tmp_path)
+    try:
+        assert not migrated.migrated
+        assert not migrated.profiles
+        assert target.path.read_bytes() == original
+    finally:
+        migrated.close()
+
+
+def test_migration_does_not_hide_corruption_or_leave_partial_file(tmp_path, monkeypatch):
+    source = tmp_path / "legacy"
+    source.mkdir()
+    path = source / "connections.json"
+    path.write_text("{broken", encoding="utf-8")
+    target = tmp_path / "config"
+    with pytest.raises(ConnectionError):
+        ConnectionManager(target, legacy_directory=source)
+    assert not target.exists()
+    path.write_text('{"version": 1, "connections": []}', encoding="utf-8")
+
+    def fail_replace(*args):
+        raise OSError("Write failed")
+
+    monkeypatch.setattr("os.replace", fail_replace)
+    with pytest.raises(ConnectionError, match="无法保存"):
+        ConnectionManager(target, legacy_directory=source)
+    assert not list(target.iterdir())
+    assert path.exists()
+
+
+def test_invalid_credential_namespace_is_rejected(tmp_path):
+    (tmp_path / "connections.json").write_text(
+        '{"version": 1, "connections": [], "credentialService": "unrelated-service"}', encoding="utf-8"
+    )
+    with pytest.raises(ConnectionError):
+        ConnectionManager(tmp_path)

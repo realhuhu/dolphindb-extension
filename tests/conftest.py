@@ -7,5 +7,5 @@ pytest_plugins = ["pytest_jupyter.jupyter_server"]
 def jp_server_config(tmp_path):
     return {
         "ServerApp": {"jpserver_extensions": {"dolphindb_extension": True}},
-        "DolphinDBExtensionApp": {"data_dir": str(tmp_path / "profiles")},
+        "DolphinDBExtensionApp": {"connections_dir": str(tmp_path / "profiles")},
     }

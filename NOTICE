@@ -3,6 +3,8 @@ https://github.com/dolphindb/vscode-extension
 
 The upstream source is distributed under the Apache License, Version 2.0.
 The fixed upstream revision and extraction details are recorded in
-frontend/upstream/provenance.json. Connection method bodies and shared types
-are reused through scripts/sync_upstream.py; Jupyter UI, configuration storage,
-and the authenticated WebSocket relay are implemented in this project.
+frontend/upstream/provenance.json. Connection method bodies, execution code,
+database helper functions, and shared types are reused through
+scripts/sync_upstream.py. Function documentation and completion use the same
+DolphinDB JavaScript SDK and its DocsProvider. Jupyter UI, configuration storage,
+document-session lifecycle, and authenticated transport are implemented here.

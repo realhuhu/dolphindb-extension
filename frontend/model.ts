@@ -1,6 +1,7 @@
 import { Signal } from '@lumino/signaling';
 import { request, socketUrl, type Draft, type Profile, type SessionTicket, type Snapshot } from './api';
 import { DdbConnection } from './upstream/connection';
+import { SettingsModel } from './settings';
 
 export class ConnectionModel {
   readonly changed = new Signal<this, void>(this);
@@ -9,6 +10,19 @@ export class ConnectionModel {
   loaded = false;
   notice: { kind: 'error' | 'success'; text: string } | null = null;
   current: { id: string; connection: DdbConnection } | null = null;
+
+  constructor(readonly preferences: SettingsModel = new SettingsModel()) {
+    preferences.changed.connect(this.settingsChanged, this);
+    if (preferences.loadError) { this.notice = { kind: 'error', text: preferences.loadError }; }
+  }
+
+  private settingsChanged(): void { this.changed.emit(); }
+
+  dispose(): void {
+    this.preferences.changed.disconnect(this.settingsChanged, this);
+    this.disconnect();
+    Signal.clearData(this);
+  }
 
   get connected(): boolean {
     return Boolean(this.current?.connection.ddb.connected && this.current.connection.connected);
