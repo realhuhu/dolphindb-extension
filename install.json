@@ -1,0 +1,5 @@
+{
+  "packageManager": "python",
+  "packageName": "dolphindb-extension",
+  "uninstallInstructions": "Use your Python package manager to uninstall dolphindb-extension."
+}

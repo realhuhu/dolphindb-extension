@@ -1,0 +1,56 @@
+{
+  "name": "dolphindb-extension",
+  "version": "0.1.0-alpha.2",
+  "description": "Visual DolphinDB connection management for Jupyter",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "style": "style/index.css",
+  "styleModule": "style/index.js",
+  "files": [
+    "lib/**/*",
+    "style/**/*"
+  ],
+  "sideEffects": [
+    "style/*.css",
+    "style/index.js"
+  ],
+  "scripts": {
+    "build": "tsc && jupyter-builder build .",
+    "build:prod": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jupyterlab/application": "^4.2.0",
+    "@jupyterlab/apputils": "^4.2.0",
+    "@jupyterlab/coreutils": "^6.2.0",
+    "@jupyterlab/services": "^7.2.0",
+    "@jupyterlab/ui-components": "^4.2.0",
+    "@lumino/coreutils": "^2.2.3",
+    "@lumino/messaging": "^2.0.0",
+    "@lumino/signaling": "^2.1.6",
+    "dolphindb": "3.1.41",
+    "react": "^18.3.1",
+    "xshell": "1.3.48"
+  },
+  "devDependencies": {
+    "@jupyter/builder": "^1.2.0",
+    "@types/react": "^18.3.1",
+    "typescript": "~5.9.3"
+  },
+  "jupyterlab": {
+    "extension": true,
+    "outputDir": "src/dolphindb_extension/labextension",
+    "discovery": {
+      "server": {
+        "managers": [
+          "pip"
+        ],
+        "base": {
+          "name": "dolphindb_extension"
+        }
+      }
+    }
+  }
+}

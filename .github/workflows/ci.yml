@@ -18,12 +18,29 @@ jobs:
         python-version: ["3.10", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.9.26"
           python-version: ${{ matrix.python-version }}
       - name: Check locked environment
         run: uv sync --locked
+      - name: Check upstream source reuse
+        run: uv run python scripts/sync_upstream.py --check
+      - name: Build frontend from locked dependencies
+        run: |
+          npm ci
+          npm exec tsc
+          uv run jupyter-builder build .
+      - name: Check Python and server behavior
+        run: |
+          uv run ruff check src scripts tests
+          uv run pytest -q
       - name: Build distributions
         run: uv build --no-sources
       - name: Check package metadata and README
@@ -32,6 +49,8 @@ jobs:
         run: >-
           uv run --isolated --no-project --with dist/*.whl
           python -I -c "import dolphindb_extension; print(dolphindb_extension.__version__)"
+      - name: Verify prebuilt extension discovery
+        run: uv run jupyter labextension list
       - name: Verify isolated source distribution installation
         run: >-
           uv run --isolated --no-project --with dist/*.tar.gz

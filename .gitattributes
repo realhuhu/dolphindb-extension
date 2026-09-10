@@ -1,0 +1,2 @@
+# Preserve whitespace in code copied from the pinned upstream source.
+frontend/upstream/*.ts whitespace=-blank-at-eol

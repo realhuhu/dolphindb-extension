@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/dolphindb/vscode-extension",
+  "revision": "bd726b584540d09a8f23b423b040c9f5ce728d61",
+  "connectorSha256": "05716c7786dc8683e8b375d24a6182048c6cab8b1fd612ba79c94b28bf3ca37e",
+  "methods": [
+    "connect",
+    "disconnect",
+    "update_logined",
+    "get_node_type",
+    "get_node_alias",
+    "get_controller_alias",
+    "get_cluster_perf",
+    "get_version",
+    "check_client_auth"
+  ],
+  "adaptations": [
+    "Use browser SDK entry points",
+    "Remove VS Code presentation/logging",
+    "Explicit strict TypeScript types",
+    "Use String.split instead of String.slice_to"
+  ]
+}

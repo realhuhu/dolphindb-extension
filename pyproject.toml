@@ -1,25 +1,29 @@
 [project]
 name = "dolphindb-extension"
-version = "0.1.0a1"
-description = "DolphinDB integration for JupyterLab and Jupyter Notebook (initial scaffold)."
+version = "0.1.0a2"
+description = "Visual DolphinDB connection management for JupyterLab and Jupyter Notebook."
 readme = "README.md"
 authors = [
     { name = "realhuhu", email = "2661467107@qq.com" }
 ]
 requires-python = ">=3.10"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 keywords = ["dolphindb", "ddb", "jupyter", "jupyterlab", "notebook"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Framework :: Jupyter",
+    "Framework :: Jupyter :: JupyterLab :: Extensions :: Prebuilt",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Database :: Front-Ends",
 ]
-dependencies = []
+dependencies = [
+    "jupyter-server>=2.13,<3",
+    "keyring>=25,<26",
+]
 
 [project.urls]
 Homepage = "https://github.com/realhuhu/dolphindb-extension"
@@ -28,8 +32,47 @@ Issues = "https://github.com/realhuhu/dolphindb-extension/issues"
 Changelog = "https://github.com/realhuhu/dolphindb-extension/blob/main/CHANGELOG.md"
 
 [build-system]
-requires = ["hatchling>=1.27,<2"]
+requires = ["hatchling>=1.27,<2", "hatch-jupyter-builder>=0.9,<1", "jupyter-builder>=1.2,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dolphindb_extension"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"src/dolphindb_extension/labextension" = "share/jupyter/labextensions/dolphindb-extension"
+"install.json" = "share/jupyter/labextensions/dolphindb-extension/install.json"
+"jupyter-config/jupyter_server_config.d" = "etc/jupyter/jupyter_server_config.d"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "frontend", "style", "scripts", "tests", "jupyter-config", "package.json", "package-lock.json", "tsconfig.json", "install.json", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "uv.lock", ".python-version"]
+artifacts = ["src/dolphindb_extension/labextension"]
+
+[tool.hatch.build.hooks.jupyter-builder]
+build-function = "hatch_jupyter_builder.npm_builder"
+ensured-targets = ["src/dolphindb_extension/labextension/package.json", "src/dolphindb_extension/labextension/static/style.js"]
+skip-if-exists = ["src/dolphindb_extension/labextension/static/style.js"]
+
+[tool.hatch.build.hooks.jupyter-builder.build-kwargs]
+build_cmd = "build:prod"
+npm = ["npm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = ["upstream"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[dependency-groups]
+dev = [
+    "hatch-jupyter-builder>=0.9,<1",
+    "jupyterlab>=4.2,<5",
+    "notebook>=7.2,<8",
+    "pytest>=8,<9",
+    "pytest-jupyter[server]>=0.10,<1",
+    "ruff>=0.12,<1",
+]

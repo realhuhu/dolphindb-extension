@@ -1,0 +1,81 @@
+/* A compact, theme-aware connection workspace within Jupyter's shell. */
+.ddb-sidebar { min-width: 260px; background: var(--jp-layout-color1); color: var(--jp-ui-font-color1); }
+.ddb-panel { --ddb-accent: #087f8c; --ddb-tint: color-mix(in srgb, var(--ddb-accent) 9%, var(--jp-layout-color1)); height: 100%; display: flex; flex-direction: column; overflow: auto; font-family: var(--jp-ui-font-family); font-size: var(--jp-ui-font-size1); }
+[data-jp-theme-light='false'] .ddb-panel { --ddb-accent: #61c7cb; }
+.ddb-panel * { box-sizing: border-box; }
+.ddb-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 20px 16px 18px; border-bottom: 1px solid var(--jp-border-color2); flex-shrink: 0; }
+.ddb-brand { display: flex; align-items: center; gap: 10px; }
+.ddb-brand-mark { width: 29px; height: 33px; color: var(--ddb-accent); }
+.ddb-brand-mark svg, .ddb-empty svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 1.7; }
+.ddb-brand strong { display: block; font-size: 16px; font-weight: 650; letter-spacing: -.3px; }
+.ddb-brand div > span { display: block; margin-top: 4px; font-size: 9px; letter-spacing: 1.7px; color: var(--jp-ui-font-color2); }
+.ddb-tools { display: flex; gap: 6px; }
+.ddb-panel button { font: inherit; cursor: pointer; transition: background-color .12s, border-color .12s; }
+.ddb-panel button:disabled { cursor: default; opacity: .5; }
+.ddb-panel button:focus-visible, .ddb-panel input:focus-visible { outline: 2px solid var(--ddb-accent); outline-offset: 2px; }
+.ddb-icon-button { border: 1px solid var(--jp-border-color2); border-radius: 4px; background: var(--jp-layout-color1); color: var(--jp-ui-font-color1); width: 28px; height: 28px; font-size: 20px !important; line-height: 1; }
+.ddb-icon-button:hover:not(:disabled) { background: var(--jp-layout-color2); }
+.ddb-add { background: var(--ddb-accent); border-color: var(--ddb-accent); color: var(--jp-layout-color0); }
+.ddb-current { margin: 16px; padding: 13px 14px; border: 1px solid var(--jp-border-color2); border-left: 3px solid var(--ddb-accent); background: var(--ddb-tint); border-radius: 4px; }
+.ddb-eyebrow { display: flex; align-items: center; gap: 6px; color: var(--jp-ui-font-color2); font-size: 11px; }
+.ddb-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--jp-ui-font-color3); flex-shrink: 0; }
+.ddb-dot.is-online { background: var(--ddb-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ddb-accent) 12%, transparent); }
+.ddb-status-label { margin-left: auto; font-size: 10px; }
+.ddb-current-name { display: block; font-size: 14px; margin-top: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.ddb-current-detail { display: block; margin-top: 6px; font-size: 11px; color: var(--jp-ui-font-color2); line-height: 1.6; overflow-wrap: anywhere; }
+.ddb-current .ddb-text-button { margin-top: 8px; }
+.ddb-list-heading { padding: 4px 16px 10px; }
+.ddb-list-heading h2 { margin: 0; font-weight: 600; font-size: 12px; }
+.ddb-list-heading h2 span { margin-left: 6px; padding: 2px 5px; background: var(--jp-layout-color2); color: var(--jp-ui-font-color2); border-radius: 3px; font-size: 10px; }
+.ddb-list { flex: 1; padding: 0 16px 16px; }
+.ddb-connection { border: 1px solid var(--jp-border-color2); padding: 13px 12px 10px; margin-bottom: 10px; border-radius: 5px; background: var(--jp-layout-color1); }
+.ddb-connection.is-selected { border-color: var(--ddb-accent); }
+.ddb-connection-title { display: flex; align-items: flex-start; gap: 8px; }
+.ddb-connection h3 { font-size: 13px; font-weight: 600; margin: 0; overflow-wrap: anywhere; flex: 1; }
+.ddb-badge { font-size: 10px; color: var(--ddb-accent); border-radius: 3px; padding: 2px 5px; background: var(--ddb-tint); white-space: nowrap; }
+.ddb-endpoint { display: block; font-family: var(--jp-code-font-family); color: var(--jp-ui-font-color2); font-size: 11px; line-height: 1.6; margin-top: 9px; overflow-wrap: anywhere; }
+.ddb-connection-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--jp-ui-font-color2); margin-top: 5px; font-size: 10px; }
+.ddb-connection-meta span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.ddb-connection-actions { display: flex; align-items: center; gap: 12px; padding-top: 12px; margin-top: 10px; border-top: 1px solid var(--jp-border-color2); }
+.ddb-button { min-height: 30px; border: 1px solid var(--jp-border-color1); background: var(--jp-layout-color1); color: var(--jp-ui-font-color1); border-radius: 4px; padding: 6px 12px; font-size: 12px !important; font-weight: 500 !important; }
+.ddb-button:hover:not(:disabled) { background: var(--jp-layout-color2); border-color: var(--jp-ui-font-color2); }
+.ddb-primary { color: var(--jp-layout-color0); background: var(--ddb-accent); border-color: var(--ddb-accent); }
+.ddb-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ddb-accent) 85%, black); border-color: var(--ddb-accent); }
+.ddb-connection-actions .ddb-button { flex: 1; }
+.ddb-selected-button:disabled { color: var(--ddb-accent); opacity: 1; border-color: transparent; background: var(--ddb-tint); }
+.ddb-text-button { border: 0; padding: 2px 0; background: transparent; color: var(--jp-ui-font-color2); font-size: 11px !important; white-space: nowrap; }
+.ddb-text-button:hover:not(:disabled) { color: var(--ddb-accent); }
+.ddb-danger-text:hover:not(:disabled) { color: var(--jp-error-color1); }
+.ddb-empty { padding: 38px 5px 30px; text-align: center; }
+.ddb-empty > svg { width: 43px; height: 43px; color: var(--ddb-accent); opacity: .7; }
+.ddb-empty h3 { font-size: 14px; margin: 19px 0 9px; font-weight: 500; }
+.ddb-empty p { color: var(--jp-ui-font-color2); font-size: 12px; line-height: 1.8; margin-bottom: 22px; }
+.ddb-footer { padding: 11px 16px; font-size: 10px; line-height: 1.6; color: var(--jp-ui-font-color2); border-top: 1px solid var(--jp-border-color2); }
+.ddb-notice { margin: 12px 16px 0; border: 1px solid var(--jp-border-color2); border-radius: 4px; padding: 10px 12px; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.ddb-notice-success { color: var(--ddb-accent); background: var(--ddb-tint); border-color: color-mix(in srgb, var(--ddb-accent) 30%, var(--jp-border-color2)); }
+.ddb-notice-error { color: var(--jp-error-color1); background: color-mix(in srgb, var(--jp-error-color1) 7%, var(--jp-layout-color1)); border-color: color-mix(in srgb, var(--jp-error-color1) 35%, var(--jp-border-color2)); }
+.ddb-form { display: flex; flex: 1; flex-direction: column; padding: 14px 16px 0; min-width: 0; }
+.ddb-back { align-self: flex-start; background: none; border: 0; color: var(--jp-ui-font-color2); font-size: 11px !important; padding: 3px 0; }
+.ddb-back:hover { color: var(--ddb-accent); }
+.ddb-form-title { margin: 20px 0 5px; }
+.ddb-form-title h2 { margin: 0 0 7px; font-size: 17px; font-weight: 600; }
+.ddb-form-title p { margin: 0 0 7px; color: var(--jp-ui-font-color2); font-size: 11px; line-height: 1.6; }
+.ddb-form fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.ddb-form label:not(.ddb-checkbox) { display: block; margin: 15px 0 7px; font-size: 12px; font-weight: 500; }
+.ddb-form label > span:not(:last-child), .ddb-form label:not(.ddb-checkbox) > span { color: var(--ddb-accent); }
+.ddb-form input:not([type='checkbox']), .ddb-search { width: 100%; min-width: 0; background: var(--jp-input-background); border: 1px solid var(--jp-input-border-color); color: var(--jp-ui-font-color1); border-radius: 4px; padding: 8px 9px; font: inherit; font-size: 12px; height: 34px; }
+.ddb-form input::placeholder, .ddb-search::placeholder { color: var(--jp-ui-font-color3); }
+.ddb-search { margin: 0 16px 12px; width: calc(100% - 32px); }
+.ddb-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ddb-form-divider { height: 1px; background: var(--jp-border-color2); margin: 20px 0 2px; }
+.ddb-password-field { display: flex; position: relative; }
+.ddb-password-field input { padding-right: 43px !important; }
+.ddb-password-toggle { position: absolute; top: 1px; bottom: 1px; right: 1px; border: 0; border-radius: 4px; padding: 0 9px; color: var(--jp-ui-font-color2); background: transparent; font-size: 10px !important; }
+.ddb-clear-password { margin-top: 5px; }
+.ddb-checkbox { display: flex; gap: 8px; align-items: center; margin: 18px 0 7px; font-size: 12px; line-height: 1.6; cursor: pointer; }
+.ddb-checkbox input { margin: 0; accent-color: var(--ddb-accent); width: 14px; height: 14px; }
+.ddb-help { color: var(--jp-ui-font-color2); font-size: 10px; line-height: 1.7; margin: 0 0 10px 22px; }
+.ddb-form-actions { display: flex; gap: 10px; position: sticky; bottom: 0; margin-top: auto; padding: 18px 0; background: var(--jp-layout-color1); border-top: 1px solid var(--jp-border-color2); }
+.ddb-form-actions > button { flex: 1; }
+.ddb-loading { color: var(--jp-ui-font-color2); font-size: 12px; line-height: 1.8; padding: 15px 0; }
+@media (prefers-reduced-motion: reduce) { .ddb-panel button { transition: none; } }

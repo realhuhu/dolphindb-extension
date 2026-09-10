@@ -1,0 +1,3 @@
+[submodule "upstream/vscode-extension"]
+	path = upstream/vscode-extension
+	url = https://github.com/dolphindb/vscode-extension.git

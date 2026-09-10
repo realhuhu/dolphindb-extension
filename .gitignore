@@ -24,7 +24,14 @@ uv.toml
 htmlcov/
 node_modules/
 .ipynb_checkpoints/
+.idea/
 
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Generated Jupyter frontend and isolated UI test environment
+lib/
+src/dolphindb_extension/labextension/
+.qa/
+tsconfig.tsbuildinfo
