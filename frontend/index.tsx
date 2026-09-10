@@ -1,7 +1,8 @@
 import { ILayoutRestorer, ILabShell, type JupyterFrontEnd, type JupyterFrontEndPlugin } from '@jupyterlab/application';
 import { Dialog, ICommandPalette, ReactWidget, showDialog } from '@jupyterlab/apputils';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
-import { LabIcon } from '@jupyterlab/ui-components';
+import { LabIcon, SidePanel } from '@jupyterlab/ui-components';
+import { Panel } from '@lumino/widgets';
 import type { Message } from '@lumino/messaging';
 import * as React from 'react';
 import { ConnectionModel } from './model';
@@ -9,6 +10,10 @@ import { ConnectionPanel } from './panel';
 import { IExtensionSettings, SETTINGS_ID, SettingsModel } from './settings';
 import { IConnectionModel } from './tokens';
 import dosPlugin from './dos/plugin';
+import notebookPlugin from './notebook/plugin';
+import notebookExecutorPlugin from './notebook/executor-plugin';
+import languagePlugin from './language/plugin';
+import workspacePlugin from './session/workspace';
 
 const icon = new LabIcon({ name: 'dolphindb-extension:connections', svgstr: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g class="jp-icon3" fill="none" stroke="#616161" stroke-width="1.6" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="7.5" ry="3"/><path d="M4.5 5v7c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V5M4.5 12v7c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-7"/></g></svg>' });
 
@@ -16,16 +21,15 @@ export { IConnectionModel } from './tokens';
 export { IExtensionSettings, SETTINGS_ID } from './settings';
 export type { ExtensionSettings } from './settings';
 
-class Sidebar extends ReactWidget {
+class Sidebar extends SidePanel {
   constructor(readonly model: ConnectionModel, readonly onOpenSettings: () => void) {
-    super();
+    super({ content: new Panel() });
     this.id = 'dolphindb-connections';
     this.title.icon = icon;
     this.title.caption = 'DolphinDB 连接';
     this.addClass('ddb-sidebar');
+    this.addWidget(ReactWidget.create(<ConnectionPanel model={model} onOpenSettings={onOpenSettings}/>));
   }
-
-  render(): React.ReactElement { return <ConnectionPanel model={this.model} onOpenSettings={this.onOpenSettings} />; }
 
   protected onAfterShow(message: Message): void {
     super.onAfterShow(message);
@@ -96,4 +100,4 @@ const plugin: JupyterFrontEndPlugin<ConnectionModel> = {
   },
 };
 
-export default [settingsPlugin, plugin, dosPlugin];
+export default [settingsPlugin, plugin, languagePlugin, workspacePlugin, dosPlugin, notebookExecutorPlugin, notebookPlugin];

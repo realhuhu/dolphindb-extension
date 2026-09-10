@@ -1,5 +1,6 @@
 import { Dialog, showDialog } from '@jupyterlab/apputils';
-import { settingsIcon } from '@jupyterlab/ui-components';
+import { addIcon, refreshIcon, settingsIcon, Button, FilterBox, InputGroup, ToolbarButtonComponent } from '@jupyterlab/ui-components';
+import { Checkbox, Toolbar, type CheckboxElement } from '@jupyter/react-components';
 import * as React from 'react';
 import { endpoint, type Draft, type Profile } from './api';
 import { ConnectionModel } from './model';
@@ -13,6 +14,7 @@ export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionMo
   const [, update] = React.useReducer(n => n + 1, 0);
   const [editing, setEditing] = React.useState<Profile | 'new' | null>(null);
   const [filter, setFilter] = React.useState('');
+  const updateFilter = React.useCallback((_filter: unknown, query?: string) => setFilter(query ?? ''), []);
   const { sidebar } = model.preferences.value;
   const showSearch = sidebar.alwaysShowSearch || model.state.connections.length > 3;
   React.useEffect(() => { if (!showSearch) { setFilter(''); } }, [showSearch]);
@@ -44,11 +46,11 @@ export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionMo
   return <section className="ddb-panel" aria-label="DolphinDB 连接管理" aria-busy={Boolean(model.busy)}>
     <header className="ddb-header">
       <div className="ddb-brand"><span className="ddb-brand-mark"><DatabaseMark /></span><div><strong>DolphinDB</strong><span>CONNECTIONS</span></div></div>
-      {!editing && <div className="ddb-tools">
-        <button className="ddb-icon-button" title="打开 DolphinDB 设置" aria-label="打开 DolphinDB 设置" onClick={onOpenSettings}><settingsIcon.react width="16" height="16" /></button>
-        <button className="ddb-icon-button" title="刷新连接列表" aria-label="刷新连接列表" disabled={Boolean(model.busy)} onClick={() => void model.refresh()}>↻</button>
-        <button className="ddb-icon-button ddb-add" title="新增连接" aria-label="新增连接" disabled={Boolean(model.busy)} onClick={() => edit('new')}>＋</button>
-      </div>}
+      {!editing && <Toolbar aria-label="连接管理工具栏">
+        <ToolbarButtonComponent icon={settingsIcon} tooltip="打开 DolphinDB 设置" onClick={onOpenSettings}/>
+        <ToolbarButtonComponent icon={refreshIcon} tooltip="刷新连接列表" enabled={!model.busy} onClick={() => void model.refresh()}/>
+        <ToolbarButtonComponent icon={addIcon} tooltip="新增连接" enabled={!model.busy} onClick={() => edit('new')}/>
+      </Toolbar>}
     </header>
     {model.notice && <div role={model.notice.kind === 'error' ? 'alert' : 'status'} className={`ddb-notice ddb-notice-${model.notice.kind}`}>{model.notice.text}</div>}
     {editing ? <ConnectionForm key={editing === 'new' ? 'new' : editing.id} profile={editing === 'new' ? undefined : editing} model={model} onClose={() => setEditing(null)} /> : <>
@@ -57,15 +59,15 @@ export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionMo
         <strong className="ddb-current-name">{active?.name || '尚未选择连接'}</strong>
         {model.connected && model.current ? <>
           <span className="ddb-current-detail">{model.current.connection.node_alias} · v{model.current.connection.version}</span>
-          <button className="ddb-text-button" disabled={Boolean(model.busy)} onClick={() => model.disconnect()}>断开连接</button>
+          <Button minimal small disabled={Boolean(model.busy)} onClick={() => model.disconnect()}>断开连接</Button>
         </> : <span className="ddb-current-detail">{active ? '点击下方连接，继续工作。' : '配置服务器，开始使用 DolphinDB。'}</span>}
       </div>
       <div className="ddb-list-heading"><h2>已保存的连接 <span>{model.state.connections.length}</span></h2></div>
-      {showSearch && <input className="ddb-search" aria-label="搜索连接" placeholder="搜索名称或地址…" value={filter} onChange={e => setFilter(e.target.value)} />}
+      {showSearch && <div className="ddb-search"><FilterBox placeholder="搜索名称或地址…" useFuzzyFilter={false} updateFilter={updateFilter}/></div>}
       <div className="ddb-list">
         {!model.loaded && !model.notice ? <p className="ddb-loading" role="status">正在加载连接…</p> : model.loaded && !model.state.connections.length ? <div className="ddb-empty">
           <DatabaseMark /><h3>添加第一个连接</h3><p>填写服务器地址和登录信息，<br />连接配置会自动保存。</p>
-          <button className="ddb-button ddb-primary" onClick={() => edit('new')}>＋ 新增连接</button>
+          <Button onClick={() => edit('new')}>＋ 新增连接</Button>
         </div> : profiles.map(profile => {
           const selected = model.current?.id === profile.id && model.connected;
           const connecting = model.busy === `connect:${profile.id}`;
@@ -74,9 +76,9 @@ export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionMo
             <code className="ddb-endpoint">{endpoint(profile)}</code>
             {sidebar.showConnectionDetails && <div className="ddb-connection-meta"><span>{profile.username || '匿名用户'}</span><span>{profile.ssl ? 'SSL' : '标准连接'}</span></div>}
             <div className="ddb-connection-actions">
-              <button className={`ddb-button ${selected ? 'ddb-selected-button' : ''}`} disabled={Boolean(model.busy) || selected} onClick={() => void model.connect(profile)}>{connecting ? '连接中…' : selected ? '✓ 已连接' : model.connected ? '切换连接' : '连接'}</button>
-              <button className="ddb-text-button" disabled={Boolean(model.busy)} aria-label={`编辑 ${profile.name}`} onClick={() => edit(profile)}>编辑</button>
-              <button className="ddb-text-button ddb-danger-text" disabled={Boolean(model.busy)} aria-label={`删除 ${profile.name}`} onClick={() => void remove(profile)}>删除</button>
+              <Button disabled={Boolean(model.busy) || selected} onClick={() => void model.connect(profile)}>{connecting ? '连接中…' : selected ? '✓ 已连接' : model.connected ? '切换连接' : '连接'}</Button>
+              <Button minimal small disabled={Boolean(model.busy)} aria-label={`编辑 ${profile.name}`} onClick={() => edit(profile)}>编辑</Button>
+              <Button minimal small disabled={Boolean(model.busy)} aria-label={`删除 ${profile.name}`} onClick={() => void remove(profile)}>删除</Button>
             </div>
           </article>;
         })}
@@ -108,28 +110,28 @@ function ConnectionForm({ profile, model, onClose }: { profile?: Profile; model:
   };
   const busy = Boolean(model.busy);
   return <form className="ddb-form" onSubmit={event => void submit(event)} ref={form}>
-    <button className="ddb-back" type="button" disabled={busy} onClick={onClose}>← 返回连接列表</button>
+    <Button minimal small className="ddb-back" type="button" disabled={busy} onClick={onClose}>← 返回连接列表</Button>
     <div className="ddb-form-title"><h2>{profile ? '编辑连接' : '新增连接'}</h2><p>配置 DolphinDB 服务器与登录信息。</p></div>
     <fieldset disabled={busy}>
       <label htmlFor="ddb-name">连接名称 <span>*</span></label>
-      <input id="ddb-name" required maxLength={80} placeholder="例如：本地开发" autoFocus autoComplete="off" value={draft.name} onChange={e => field('name', e.target.value)} />
+      <InputGroup id="ddb-name" required maxLength={80} placeholder="例如：本地开发" autoFocus autoComplete="off" value={draft.name} onChange={e => field('name', e.target.value)} />
       <label htmlFor="ddb-host">服务器地址 <span>*</span></label>
-      <input id="ddb-host" required maxLength={253} placeholder="127.0.0.1 或 db.example.com" autoComplete="off" spellCheck={false} value={draft.host} onChange={e => field('host', e.target.value)} />
+      <InputGroup id="ddb-host" required maxLength={253} placeholder="127.0.0.1 或 db.example.com" autoComplete="off" spellCheck={false} value={draft.host} onChange={e => field('host', e.target.value)} />
       <div className="ddb-field-row">
-        <div><label htmlFor="ddb-port">端口 <span>*</span></label><input id="ddb-port" type="number" min={1} max={65535} required value={Number.isNaN(draft.port) ? '' : draft.port} onChange={e => field('port', e.target.valueAsNumber)} /></div>
-        <div><label htmlFor="ddb-timeout">超时（秒）</label><input id="ddb-timeout" type="number" min={1} max={60} required value={Number.isNaN(draft.timeout) ? '' : draft.timeout} onChange={e => field('timeout', e.target.valueAsNumber)} /></div>
+        <div><label htmlFor="ddb-port">端口 <span>*</span></label><InputGroup id="ddb-port" type="number" min={1} max={65535} required value={Number.isNaN(draft.port) ? '' : draft.port} onChange={e => field('port', e.target.valueAsNumber)} /></div>
+        <div><label htmlFor="ddb-timeout">超时（秒）</label><InputGroup id="ddb-timeout" type="number" min={1} max={60} required value={Number.isNaN(draft.timeout) ? '' : draft.timeout} onChange={e => field('timeout', e.target.valueAsNumber)} /></div>
       </div>
       <div className="ddb-form-divider" />
       <label htmlFor="ddb-username">用户名</label>
-      <input id="ddb-username" maxLength={128} autoComplete="off" placeholder="留空以匿名连接" value={draft.username} onChange={e => field('username', e.target.value)} />
+      <InputGroup id="ddb-username" maxLength={128} autoComplete="off" placeholder="留空以匿名连接" value={draft.username} onChange={e => field('username', e.target.value)} />
       <label htmlFor="ddb-password">密码</label>
-      <div className="ddb-password-field"><input id="ddb-password" type={showPassword ? 'text' : 'password'} maxLength={4096} autoComplete="new-password" placeholder={keepPassword ? '已保存，留空保持不变' : '输入密码'} value={draft.password || ''} onChange={e => field('password', e.target.value)} /><button className="ddb-password-toggle" type="button" aria-label={showPassword ? '隐藏密码' : '显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? '隐藏' : '显示'}</button></div>
-      {keepPassword && <button className="ddb-text-button ddb-clear-password" type="button" onClick={() => { setKeepPassword(false); field('password', ''); }}>清除已有密码</button>}
-      <label className="ddb-checkbox"><input type="checkbox" checked={draft.rememberPassword} disabled={!model.state.credentialStorage && !draft.rememberPassword} onChange={e => field('rememberPassword', e.target.checked)} /><span>记住密码</span></label>
+      <div className="ddb-password-field"><InputGroup id="ddb-password" type={showPassword ? 'text' : 'password'} maxLength={4096} autoComplete="new-password" placeholder={keepPassword ? '已保存，留空保持不变' : '输入密码'} value={draft.password || ''} onChange={e => field('password', e.target.value)} /><Button minimal small className="ddb-password-toggle" type="button" aria-label={showPassword ? '隐藏密码' : '显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? '隐藏' : '显示'}</Button></div>
+      {keepPassword && <Button minimal small className="ddb-clear-password" type="button" onClick={() => { setKeepPassword(false); field('password', ''); }}>清除已有密码</Button>}
+      <Checkbox className="ddb-checkbox" checked={draft.rememberPassword} disabled={busy || (!model.state.credentialStorage && !draft.rememberPassword)} onChange={e => field('rememberPassword', (e.currentTarget as CheckboxElement).checked)}>记住密码</Checkbox>
       <p className="ddb-help">{draft.rememberPassword ? '密码保存在 Jupyter 服务器的系统凭据库。' : '密码仅用于本次 Jupyter 服务会话，重启后需重新输入。'}{!model.state.credentialStorage && ' 此环境未启用系统凭据库。'}</p>
-      <label className="ddb-checkbox"><input type="checkbox" checked={draft.ssl} onChange={e => field('ssl', e.target.checked)} /><span>使用 SSL 加密连接</span></label>
+      <Checkbox className="ddb-checkbox" checked={draft.ssl} disabled={busy} onChange={e => field('ssl', (e.currentTarget as CheckboxElement).checked)}>使用 SSL 加密连接</Checkbox>
       <p className="ddb-help">需要 DolphinDB 服务器开启 HTTPS / SSL。</p>
     </fieldset>
-    <div className="ddb-form-actions"><button className="ddb-button" type="button" disabled={busy} onClick={() => { if (form.current?.reportValidity()) { void model.test(payload()); } }}>{model.busy === 'test' ? '测试中…' : '测试连接'}</button><button className="ddb-button ddb-primary" type="submit" disabled={busy}>{model.busy === 'save' ? '保存中…' : '保存连接'}</button></div>
+    <div className="ddb-form-actions"><Button type="button" disabled={busy} onClick={() => { if (form.current?.reportValidity()) { void model.test(payload()); } }}>{model.busy === 'test' ? '测试中…' : '测试连接'}</Button><Button type="submit" disabled={busy}>{model.busy === 'save' ? '保存中…' : '保存连接'}</Button></div>
   </form>;
 }

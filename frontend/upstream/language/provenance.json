@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/dolphindb/vscode-extension",
+  "revision": "bd726b584540d09a8f23b423b040c9f5ce728d61",
+  "sources": {
+    "src/languageserver/types.ts": "3f15d7c40f17b3bd41ad09be9d71836ce4f3187986ad296820ac3c81f4364cee",
+    "src/languageserver/utils.ts": "740afa41a19344d05034b8269f4fcd8e01cdbeae1979722f3aefb6848807def0",
+    "src/languageserver/symbols.ts": "7accf47473b7fd6ef0954accb63383449d882114024eb5dda9560c9ec3b2f791",
+    "src/languageserver/completions.ts": "51903c7ed028a654e77b2acd96e83846f45ce9d30eb9a3c26661f63ac2ef505c",
+    "src/languageserver/sql-completions.ts": "2901973735a0f837a98a788bcde8ef63b85ef41c804e25cccec1a1543befc934",
+    "src/languageserver/definitions.ts": "62e65ba8df30f11d2417a09091bd254daaa4c6f3605c9e17029c8ec11154c3d6",
+    "src/languageserver/diagnostics.ts": "6be613ce839e6af0b3dd4de64a27af5779e7df916cfcde532da52d3192de591c"
+  },
+  "adaptations": [
+    "Browser-safe LSP data types replace Node transport",
+    "Replace global services with request-local injected hosts",
+    "Route module reads through Jupyter Contents",
+    "Expose callbacks as callable methods; keep completion, symbol, SQL and documentation algorithms"
+  ]
+}

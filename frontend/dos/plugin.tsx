@@ -1,23 +1,30 @@
 import * as React from 'react';
 import type { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
 import { ILabShell } from '@jupyterlab/application';
-import { Dialog, ICommandPalette, ReactWidget, showDialog } from '@jupyterlab/apputils';
+import { ICommandPalette, InputDialog, ReactWidget, showDialog } from '@jupyterlab/apputils';
 import { IEditorLanguageRegistry } from '@jupyterlab/codemirror';
-import { ICompletionProviderManager } from '@jupyterlab/completer';
 import { IDocumentManager } from '@jupyterlab/docmanager';
 import { IDocumentWidget } from '@jupyterlab/docregistry';
 import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
 import { FileEditor, IEditorTracker } from '@jupyterlab/fileeditor';
 import { ILauncher } from '@jupyterlab/launcher';
 import { IRunningSessionManagers } from '@jupyterlab/running';
+import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { LabIcon } from '@jupyterlab/ui-components';
 import { DisposableDelegate } from '@lumino/disposable';
-import { Panel, SplitPanel, StackedLayout } from '@lumino/widgets';
+import { BoxPanel, SplitPanel, StackedLayout } from '@lumino/widgets';
 import { IConnectionModel } from '../tokens';
 import type { ConnectionModel } from '../model';
 import { DosManager, type DosModel } from './model';
-import { completionProvider, DOS_MIME, languageSupport } from './language';
-import { DosToolbar, OutputPanel, WorkspacePanel } from './views';
+import { DOS_MIME, languageSupport } from './language';
+import { ILanguageEditors } from '../language/plugin';
+import type { LanguageEditors } from '../language/editor';
+import { dosMetadata } from '../language/metadata';
+import { projection } from '../language/regions';
+import { createDosToolbar, OutputPanel } from './views';
+import { registerDdbRenderer } from './output';
+import { ISessionWorkspace, type SessionWorkspace } from '../session/workspace';
+import { captureVariableInsertion } from '../session/interactions';
 
 const DOS_ICON = new LabIcon({ name: 'dolphindb-extension:dos', svgstr: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path class="jp-icon3" fill="#616161" d="M5 2h9l5 5v15H5zm9 2v5h5L14 4zM7 12v6h3c3 0 3-6 0-6zm2 2h1c1 0 1 2 0 2H9zm5-2h-2v6h2c4 0 4-6 0-6zm0 2c2 0 2 2 0 2z"/></svg>' });
 const prefix = 'dolphindb-extension:';
@@ -25,26 +32,18 @@ type EditorWidget = IDocumentWidget<FileEditor>;
 
 export default {
   id: `${prefix}dos`, autoStart: true,
-  requires: [IConnectionModel, IEditorTracker, IDocumentManager, IEditorLanguageRegistry],
-  optional: [ICommandPalette, ICompletionProviderManager, IRunningSessionManagers, ILauncher, IFileBrowserFactory, ILabShell],
-  activate: (app: JupyterFrontEnd, connections: ConnectionModel, editors: IEditorTracker, documents: IDocumentManager, languages: IEditorLanguageRegistry,
-    palette: ICommandPalette | null, completer: ICompletionProviderManager | null, running: IRunningSessionManagers | null, launcher: ILauncher | null, browsers: IFileBrowserFactory | null, labShell: ILabShell | null) => {
+  requires: [IConnectionModel, IEditorTracker, IDocumentManager, IEditorLanguageRegistry, ILanguageEditors, ISessionWorkspace, IRenderMimeRegistry],
+  optional: [ICommandPalette, IRunningSessionManagers, ILauncher, IFileBrowserFactory, ILabShell],
+  activate: (app: JupyterFrontEnd, connections: ConnectionModel, editors: IEditorTracker, documents: IDocumentManager, languages: IEditorLanguageRegistry, languageEditors: LanguageEditors, workspace: SessionWorkspace, rendermime: IRenderMimeRegistry,
+    palette: ICommandPalette | null, running: IRunningSessionManagers | null, launcher: ILauncher | null, browsers: IFileBrowserFactory | null, labShell: ILabShell | null) => {
     const manager = new DosManager(connections);
-    const workspace = new WorkspacePanel();
-    workspace.id = 'dolphindb-document-workspace';
-    workspace.title.icon = DOS_ICON;
-    workspace.title.caption = 'DolphinDB 数据库与变量';
-    workspace.addClass('ddb-dos-workspace');
-    app.shell.add(workspace, 'right', { rank: 600 });
-    languages.addLanguage({ name: 'DolphinDB', mime: DOS_MIME, extensions: ['dos'], load: async () => languageSupport() });
+    registerDdbRenderer(rendermime);
+    if (!languages.findByMIME(DOS_MIME)) {
+      languages.addLanguage({ name: 'DolphinDB', mime: DOS_MIME, extensions: ['dos'], load: async () => languageSupport() });
+    }
     app.docRegistry.addFileType({ name: 'dolphindb', displayName: 'DolphinDB', extensions: ['.dos'], mimeTypes: [DOS_MIME], fileFormat: 'text', contentType: 'file', icon: DOS_ICON });
-    if (completer) { completer.registerProvider(completionProvider(manager)); }
     const models = new Map<EditorWidget, DosModel>();
-    const active = () => models.get(editors.currentWidget!) ?? null;
-    const focusWorkspace = () => {
-      workspace.setModel(active());
-      if (active()) { app.shell.activateById(workspace.id); }
-    };
+    const active = () => models.get(app.shell.currentWidget as EditorWidget) ?? null;
     const getSource = (widget: EditorWidget) => widget.content.model.sharedModel.getSource();
     const browser = () => browsers?.tracker.currentWidget ?? browsers?.tracker.find(() => true);
     const runFile = async (widget: EditorWidget) => {
@@ -76,17 +75,15 @@ export default {
       if (!paths.length) { await showDialog({ title: '批量运行 DOS', body: '先打开 DOS 文件，或在文件浏览器中选中多个 DOS 文件。' }); return; }
       await manager.ready;
       await manager.refresh();
-      class BatchPicker extends ReactWidget {
-        chosen = new Set(paths);
-        getValue() { return paths.filter(path => this.chosen.has(path)); }
-        render() { return <div className="ddb-batch-picker"><p>按以下顺序执行，各文件使用自己的连接和会话。遇到错误时停止后续文件。</p>{paths.map(path => <label key={path}><input type="checkbox" defaultChecked onChange={e => e.target.checked ? this.chosen.add(path) : this.chosen.delete(path)}/><span>{path}</span><small>{manager.profileFor(path)?.name ?? '未选择连接'}</small></label>)}</div>; }
-      }
-      const result = await showDialog<string[]>({ title: '批量运行 DOS', body: new BatchPicker(), buttons: [Dialog.cancelButton({ label: '取消' }), Dialog.okButton({ label: '运行所选文件' })] });
+      const choices = paths.map((path, index) => ({ path, label: `${index + 1}. ${path} · ${manager.profileFor(path)?.name ?? '未选择连接'}` }));
+      const result = await InputDialog.getMultipleItems({ title: '批量运行 DOS',
+        label: '按列表顺序执行，各文件使用自己的会话；遇到错误停止。Ctrl / Shift 可多选。',
+        items: choices.map(item => item.label), defaults: choices.map(item => item.label), okLabel: '运行所选文件', cancelLabel: '取消' });
       if (!result.button.accept || !result.value?.length) { return; }
       batchRunning = true; stopBatch = false;
       try {
         const jobs: { model: DosModel; code: string; widget: EditorWidget }[] = [];
-        for (const path of result.value) {
+        for (const { path } of choices.filter(item => result.value!.includes(item.label))) {
           const widget = documents.openOrReveal(path, 'Editor') as EditorWidget;
           await widget.context.ready;
           jobs.push({ model: manager.document(path), code: getSource(widget), widget });
@@ -94,7 +91,7 @@ export default {
         for (const job of jobs) {
           if (stopBatch) { break; }
           app.shell.activateById(job.widget.id);
-          workspace.setModel(job.model);
+          workspace.sync(true);
           if (!await job.model.run(job.code)) { break; }
         }
       } finally { batchRunning = false; }
@@ -104,8 +101,24 @@ export default {
       createNew(widget: EditorWidget, context) {
         if (!context.path.toLowerCase().endsWith('.dos')) { return new DisposableDelegate(() => {}); }
         const model = manager.document(context.path);
+        const unbindLanguage = languageEditors.bind(widget.content.editor.model, {
+          path: () => context.path, source: () => getSource(widget), project: (source, offset) => projection(source, offset, true),
+          metadata: dosMetadata(model), identity: () => `${model.profile?.id}:${model.session?.id ?? 'preview'}:${model.session?.executionCount ?? 0}`,
+          open: async (uri, range) => {
+            const target = documents.openOrReveal(uri, 'Editor') as EditorWidget | undefined;
+            if (!target) { return; } await target.context.ready;
+            target.content.editor.setSelection({ start: { line: range.start.line, column: range.start.character }, end: { line: range.end.line, column: range.end.character } });
+            target.content.editor.focus();
+          },
+        });
         models.set(widget, model);
         model.open();
+        const isCurrent = () => !widget.isDisposed && app.shell.currentWidget === widget;
+        const workspaceBinding = workspace.register(widget, {
+          model, path: () => context.path, scope: 'file', isCurrent,
+          identity: () => `${model.profile?.id}:${model.session?.id ?? 'preview'}:${model.session?.executionCount ?? 0}`,
+          captureInsertion: name => captureVariableInsertion(widget.content.editor, name, isCurrent),
+        });
         widget.content.addClass('ddb-dos-editor');
         widget.title.icon = DOS_ICON;
         const layout = widget.content.layout as StackedLayout;
@@ -114,35 +127,36 @@ export default {
         const split = new SplitPanel({ orientation: 'vertical', spacing: 4 });
         split.addClass('ddb-editor-split');
         split.addWidget(code);
-        const output = ReactWidget.create(<OutputPanel model={model}/>);
+        const output = ReactWidget.create(<OutputPanel model={model} rendermime={rendermime}/>);
         output.addClass('ddb-output-widget');
         split.addWidget(output);
         split.setRelativeSizes([0.7, 0.3]);
         layout.addWidget(split);
-        const toolbar = ReactWidget.create(<DosToolbar model={model} runFile={() => void runFile(widget)} runSelection={() => void runSelection(widget)} batch={() => void batch()}/>);
+        const toolbar = createDosToolbar({ model, runFile: () => runFile(widget), runSelection: () => runSelection(widget), batch, showWorkspace: () => workspace.sync(true) });
         toolbar.addClass('ddb-toolbar-widget');
         split.parent = null;
-        const body = new Panel();
+        const body = new BoxPanel({ direction: 'top-to-bottom', spacing: 0 });
         body.addClass('ddb-editor-body');
         body.addWidget(toolbar);
         body.addWidget(split);
+        BoxPanel.setStretch(split, 1);
         layout.addWidget(body);
         const renamed = () => { void model.rename(context.path); };
         context.pathChanged.connect(renamed);
         void context.ready.then(() => {
+          if (widget.isDisposed || app.shell.currentWidget !== widget) { return; }
           if (app.shell.node.clientWidth < 1100) { labShell?.collapseLeft(); }
-          workspace.setModel(model); app.shell.activateById(workspace.id);
+          workspace.sync(true);
         });
         return new DisposableDelegate(() => {
+          unbindLanguage();
           context.pathChanged.disconnect(renamed);
           models.delete(widget);
           model.closeView();
-          if (workspace.model === model) { workspace.setModel(active()); }
+          workspaceBinding.dispose();
         });
       },
     });
-    editors.currentChanged.connect(focusWorkspace);
-    labShell?.currentChanged.connect(() => { workspace.setModel(active()); });
 
     const addCommand = (id: string, label: string, execute: () => unknown, needsEditor = true) => {
       app.commands.addCommand(prefix + id, { label, execute, icon: id === 'new-dos' ? DOS_ICON : undefined, isEnabled: () => !needsEditor || Boolean(active()) });
@@ -155,7 +169,7 @@ export default {
     addCommand('run-dos', 'DolphinDB: 运行文件', () => runFile(editors.currentWidget!));
     addCommand('run-selection', 'DolphinDB: 运行选中代码或当前行', () => runSelection(editors.currentWidget!));
     addCommand('run-advance', 'DolphinDB: 运行并移至下一行', () => runSelection(editors.currentWidget!, true));
-    addCommand('complete', 'DolphinDB: 代码提示', () => completer?.invoke(editors.currentWidget!.id));
+    addCommand('complete', 'DolphinDB: 代码提示', () => languageEditors.complete(editors.currentWidget!.content.editor.model));
     addCommand('batch-dos', 'DolphinDB: 批量运行 DOS 文件', batch, false);
     addCommand('stop-batch', 'DolphinDB: 停止后续批量运行', () => { stopBatch = true; }, false);
     addCommand('interrupt-dos', 'DolphinDB: 中断当前文件', () => active()?.interrupt());

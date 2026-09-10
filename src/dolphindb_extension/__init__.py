@@ -13,3 +13,16 @@ def _jupyter_server_extension_points():
     from .extension import DolphinDBExtensionApp
 
     return [{"module": "dolphindb_extension", "app": DolphinDBExtensionApp}]
+
+
+def load_ipython_extension(ipython):
+    """Enable %ddb / %%ddb in the current IPython kernel."""
+    from .magics import load_ipython_extension as load
+
+    load(ipython)
+
+
+def unload_ipython_extension(ipython):
+    from .magics import unload_ipython_extension as unload
+
+    unload(ipython)

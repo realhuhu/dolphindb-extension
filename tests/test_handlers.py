@@ -38,6 +38,44 @@ async def test_malformed_body_is_rejected(jp_fetch):
     assert error.value.code == 400
 
 
+async def test_kernel_connection_resolves_default_and_explicit_profile_with_memory_password(jp_fetch):
+    ids = []
+    for name in ("First", "Second"):
+        response = await jp_fetch("dolphindb-extension", "connections", method="POST", body=json.dumps({
+            "name": name, "host": "localhost", "password": f"test-only-{name}",
+        }))
+        ids.append(json.loads(response.body)["connections"][-1]["id"])
+    path = ("dolphindb-extension", "kernel-connection")
+    response = await jp_fetch(*path, method="POST", body="{}")
+    assert response.headers["Cache-Control"] == "no-store"
+    assert json.loads(response.body)["id"] == ids[0]
+    await jp_fetch("dolphindb-extension", "active", method="PUT", body=json.dumps({"connectionId": ids[1]}))
+    response = await jp_fetch(*path, method="POST", body="{}")
+    assert json.loads(response.body)["password"] == "test-only-Second"
+    response = await jp_fetch(*path, method="POST", body=json.dumps({"connectionId": ids[0]}))
+    assert json.loads(response.body)["id"] == ids[0]
+    snapshot = await jp_fetch("dolphindb-extension", "connections")
+    assert b"test-only" not in snapshot.body
+
+
+async def test_kernel_connection_rejects_unauthorized_and_invalid_requests(jp_serverapp, jp_fetch, monkeypatch):
+    path = ("dolphindb-extension", "kernel-connection")
+    with pytest.raises(HTTPClientError) as error:
+        await jp_fetch(*path, method="POST", body="{}", headers={"Authorization": "token invalid"})
+    assert error.value.code == 403
+    for body, status in (("{}", 400), ('{"connectionId": 1}', 400), ('{"connectionId": "missing"}', 404)):
+        with pytest.raises(HTTPClientError) as error:
+            await jp_fetch(*path, method="POST", body=body)
+        assert error.value.code == status
+    calls = []
+    monkeypatch.setattr(jp_serverapp.authorizer, "is_authorized", lambda handler, user, action, resource:
+                        calls.append((action, resource)) or False)
+    with pytest.raises(HTTPClientError) as error:
+        await jp_fetch(*path, method="POST", body="{}")
+    assert error.value.code == 403
+    assert calls == [("execute", "dolphindb-extension:connections")]
+
+
 async def test_namespaced_authorization_for_http_and_websocket(
     jp_serverapp, jp_fetch, jp_ws_fetch, monkeypatch
 ):

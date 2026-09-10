@@ -5,6 +5,17 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "language": {
+      "title": "代码提示与模块",
+      "type": "object",
+      "additionalProperties": false,
+      "default": { "moduleRoot": "", "documentationLanguage": "zh", "automaticCompletion": true },
+      "properties": {
+        "moduleRoot": { "title": "模块目录", "description": "相对 Jupyter 文件根目录的路径；留空时索引当前文件所在目录及子目录中的 DOS 模块。", "type": "string", "default": "" },
+        "documentationLanguage": { "title": "函数文档语言", "type": "string", "enum": ["zh", "en"], "enumNames": ["中文", "English"], "default": "zh" },
+        "automaticCompletion": { "title": "自动显示 DDB 补全", "description": "输入时显示提示；关闭后仍可使用 Ctrl+Space。", "type": "boolean", "default": true }
+      }
+    },
     "connectionDefaults": {
       "title": "新增连接默认值",
       "description": "预填新增连接表单。已有连接和正在编辑的表单保留各自的配置。",

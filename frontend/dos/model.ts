@@ -66,6 +66,8 @@ export class DosModel {
       : this.manager.connections.state.connections.find(p => p.id === this.selectedId));
   }
   get executing(): boolean { return this.busy || this.session?.state === 'busy'; }
+  get panelLoading(): boolean { return this.loading; }
+  get selection(): string { return this.followsDefault && !this.session ? '' : this.profile?.id ?? ''; }
   get status(): string {
     return this.executing ? '运行中' : this.session?.state === 'disconnected' ? '已断开'
       : this.loading ? '连接中' : this.locked ? '会话就绪' : '尚未运行';
@@ -109,9 +111,15 @@ export class DosModel {
 
   async select(id: string): Promise<void> {
     if (this.locked || this.busy || this.session) { throw new Error('首次运行后连接已固定，请先关闭会话。'); }
-    this.selectedId = id;
-    this.followsDefault = false;
+    this.selectedId = id || null;
+    this.followsDefault = !id;
     await this.loadPreview();
+  }
+
+  async closeSession(): Promise<void> {
+    if (!this.session || this.executing || this.loading) { return; }
+    try { await this.manager.shutdown(this.session.id); }
+    catch (error) { this.notice = errorText(error); this.changed.emit(); }
   }
 
   async loadPreview(): Promise<void> {

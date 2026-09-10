@@ -94,6 +94,27 @@ class ActiveHandler(BaseHandler):
         self.finish(await self.manager.select(connection_id))
 
 
+class KernelConnectionHandler(BaseHandler):
+    """Supply one connection to a Python kernel over an authenticated Jupyter comm."""
+
+    @web.authenticated
+    @authorized(action="execute")
+    @connection_errors
+    async def post(self):
+        connection_id = self.body().get("connectionId")
+        if connection_id is not None and not isinstance(connection_id, str):
+            raise ConnectionError("请选择有效的 DolphinDB 连接。")
+        async with self.manager.lock:
+            if connection_id is None:
+                connection_id = self.manager.active_id or next(
+                    (p["id"] for p in self.manager.profiles), None
+                )
+            if connection_id is None:
+                raise ConnectionError("请先在 DolphinDB 侧栏配置连接。")
+            profile = self.manager.find(connection_id)
+            self.finish({**profile, "password": self.manager.credentials.get(profile)})
+
+
 def setup_handlers(web_app, manager: ConnectionManager) -> None:
     from .relay import DolphinDBRelay
 
@@ -106,6 +127,7 @@ def setup_handlers(web_app, manager: ConnectionManager) -> None:
             (url_path_join(root, "connections", r"([a-f0-9-]{36})"), ConnectionHandler, options),
             (url_path_join(root, "sessions"), SessionHandler, options),
             (url_path_join(root, "active"), ActiveHandler, options),
+            (url_path_join(root, "kernel-connection"), KernelConnectionHandler, options),
             (url_path_join(root, "ws", r"([A-Za-z0-9_-]{43})"), DolphinDBRelay, options),
         ],
     )

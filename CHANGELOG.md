@@ -1,7 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.1.0a3 - 2026-09-11
 
+- Keep Notebook metadata and cell execution on the same kernel shell, excluding queued cell runtime from metadata timeouts; cancel pending requests on restart/disconnect and refresh workspace panels after reconnect.
+- Follow JupySQL's IPython magic/argument handling: remove frontend source detection and custom execution-error dialogs; preserve native cell execution when DDB is unconfigured or unavailable.
+- Sort table previews using original SDK/pandas values before display formatting, preserving negative, decimal and large-integer order; keep active variable filters visible when the variable count shrinks.
+- Remove nested scrollbars from table preview dialogs by letting the native dialog body own scrolling.
+- Keep the current reading position when execution results are folded or expanded; resume automatic scrolling on new output or document reveal.
+- Replace document toolbars and connection selectors with ReactiveToolbar, ToolbarButton and HTMLSelect; use native InputDialog pickers for symbols and batch execution.
+- Use Jupyter TreeView/TreeItem for databases and variables, native sidebar/form/search controls for connection management, and OutputArea/rendermime with a sortable Table renderer for DOS results and previews.
+- Preserve incremental print output, escaped cell text, independent sessions and debounced insertions; keep expanded workspace sections visible after both sections were collapsed.
+- Scroll DOS execution results to the bottom as print messages, results and errors arrive.
+- Reuse Jupyter Debugger's native resizable accordion for databases and variables, with immediate folding and independent scrolling; debounce variable insertion and table previews, scoped to the original document and cursor.
+- Share DOS/Notebook connection and shutdown controls; show the active document's database and DDB session variables in one workspace panel.
+- Compact hover, completion documentation and signature popups; remove inherited Markdown whitespace and keep long documentation scrollable.
+- Prevent member completion such as `prices.` from falling back to all builtin functions when a file has not run; keep live table columns and SQL context candidates free of unrelated globals.
+- Reuse upstream language-service algorithms for DOS, cell magics, and inline `%ddb`, with reproducible source hashes and CI verification.
+- Add scoped symbols, snippets, module imports and definitions, SQL/catalog/schema/field completion, and missing-module diagnostics.
+- Render full Chinese/English function documentation and active-parameter signature help in Jupyter's CodeMirror editors.
+- Add module directory, documentation language and automatic completion settings.
+- Read completion metadata from each DOS session or Python kernel session; keep pre-execution previews switchable and release them when the last page closes.
+- Test module Contents reads, quoted completion prefixes, cross-document isolation, and kernel metadata message ordering.
+- Add `%ddb` and `%%ddb` IPython magics, native `Session.run` return values, and `%%ddb -o` result capture.
+- Add Notebook connection selection, DDB cell insertion/highlighting, and one reusable DDB session per Python kernel.
+- Transfer selected connection credentials through authenticated API/comm messages without saving them in notebooks or history.
+- Add the `notebook` Python extra and regression tests for result types, session lifecycle, kernel restart, and connection races.
+- Wait for DDB readiness through Jupyter's cell executor so restart-and-run-all preserves mixed Python/DDB cell order.
+- Forward SDK print messages to the current IPython cell, including on Windows.
 - Resolve batch connection labels from retained sessions without opening inactive documents.
 - Release unfinished database previews on editor close and restore previews when files are reopened.
 - Keep closed files from opening preview sockets on connection/settings changes; cover DOS lifecycle races in frontend tests.

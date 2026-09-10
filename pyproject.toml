@@ -1,6 +1,6 @@
 [project]
 name = "dolphindb-extension"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Visual DolphinDB connection management for JupyterLab and Jupyter Notebook."
 readme = "README.md"
 authors = [
@@ -33,6 +33,12 @@ Homepage = "https://github.com/realhuhu/dolphindb-extension"
 Repository = "https://github.com/realhuhu/dolphindb-extension"
 Issues = "https://github.com/realhuhu/dolphindb-extension/issues"
 Changelog = "https://github.com/realhuhu/dolphindb-extension/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+notebook = [
+    "dolphindb>=3.0.6,<4",
+    "ipython>=8,<10",
+]
 
 [build-system]
 requires = ["hatchling>=1.27,<2", "hatch-jupyter-builder>=0.9,<1", "jupyter-builder>=1.2,<2"]

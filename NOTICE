@@ -8,3 +8,9 @@ database helper functions, and shared types are reused through
 scripts/sync_upstream.py. Function documentation and completion use the same
 DolphinDB JavaScript SDK and its DocsProvider. Jupyter UI, configuration storage,
 document-session lifecycle, and authenticated transport are implemented here.
+
+Language symbols, completions, SQL contexts, definitions, hover, and module
+diagnostics are extracted from src/languageserver by scripts/sync_language.py.
+Their upstream revision, source hashes, and browser/Jupyter adaptations are
+recorded in frontend/upstream/language/provenance.json. The original algorithms
+are hosted with document-scoped metadata and Jupyter Contents module access.

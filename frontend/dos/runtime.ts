@@ -2,13 +2,14 @@ import { DdbForm, DdbObj, formati, type DDB, type DdbVectorObj } from 'dolphindb
 import { request, socketUrl, type SessionTicket } from '../api';
 import { DdbConnection } from '../upstream/connection';
 import { executeCode, funcdefs } from '../upstream/execution';
+import { columnSortRanks } from './table';
 
 export interface DatabaseEntry { path: string; tables: string[]; catalog?: string }
 export interface VariableEntry {
   name: string; type: string; form: string; rows: number; columns: number;
-  bytes: bigint; shared: boolean; value?: string;
+  bytes: bigint | string; shared: boolean; value?: string;
 }
-export interface DisplayValue { text?: string; columns?: string[]; rows?: string[][]; totalRows?: number }
+export interface DisplayValue { text?: string; columns?: string[]; rows?: string[][]; totalRows?: number; sortRanks?: (number[] | null)[] }
 
 export async function openSdk(ticket: SessionTicket, name: string, inspectServer = true): Promise<DdbConnection> {
   const connection = new DdbConnection(socketUrl(ticket.path), name, {
@@ -97,7 +98,8 @@ export function displayValue(obj: DdbObj, maxRows = 100): DisplayValue {
     for (let row = 0; row < Math.min(obj.rows ?? 0, maxRows); row++) {
       rows.push(columns.map(column => formati(column, row, { quote: false, nullstr: true }).slice(0, 2000)));
     }
-    return { columns: columns.map(c => c.name ?? ''), rows, totalRows: obj.rows };
+    return { columns: columns.map(c => c.name ?? ''), rows, totalRows: obj.rows,
+      sortRanks: columns.map(column => columnSortRanks(column, rows.length)) };
   }
   return { text: obj.toString().slice(0, 20_000) };
 }

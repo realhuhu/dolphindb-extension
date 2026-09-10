@@ -7,6 +7,7 @@ export const SETTINGS_ID = 'dolphindb-extension:settings';
 export const IExtensionSettings = new Token<SettingsModel>('dolphindb-extension:IExtensionSettings');
 
 export interface ExtensionSettings {
+  readonly language: { readonly moduleRoot: string; readonly documentationLanguage: 'zh' | 'en'; readonly automaticCompletion: boolean };
   readonly connectionDefaults: Readonly<Pick<Draft, 'port' | 'username' | 'timeout' | 'ssl'>>;
   readonly sidebar: {
     readonly sortOrder: 'saved' | 'name' | 'host';
@@ -18,6 +19,7 @@ export interface ExtensionSettings {
 // Keep the fallback usable in applications without a settings registry.
 // schema/settings.json defines the matching user-facing defaults and validation.
 export const DEFAULT_SETTINGS: ExtensionSettings = Object.freeze({
+  language: Object.freeze({ moduleRoot: '', documentationLanguage: 'zh', automaticCompletion: true }),
   connectionDefaults: Object.freeze({ port: 8848, username: 'admin', timeout: 10, ssl: false }),
   sidebar: Object.freeze({ sortOrder: 'saved', showConnectionDetails: true, alwaysShowSearch: false }),
 });
@@ -38,7 +40,13 @@ export function resolveSettings(composite: unknown): ExtensionSettings {
   const connection = object(input.connectionDefaults);
   const sidebar = object(input.sidebar);
   const defaults = DEFAULT_SETTINGS;
+  const language = object(input.language);
   return Object.freeze({
+    language: Object.freeze({
+      moduleRoot: typeof language.moduleRoot === 'string' ? language.moduleRoot.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '',
+      documentationLanguage: language.documentationLanguage === 'en' ? 'en' : 'zh',
+      automaticCompletion: typeof language.automaticCompletion === 'boolean' ? language.automaticCompletion : true,
+    }),
     connectionDefaults: Object.freeze({
       port: integer(connection.port, defaults.connectionDefaults.port, 65535),
       timeout: integer(connection.timeout, defaults.connectionDefaults.timeout, 60),
