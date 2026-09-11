@@ -129,7 +129,7 @@ export default {
                   line -= count;
                 }
               },
-            }));
+            }, () => cell.editor?.host));
           }
         }
         const current = new Set<CodeEditor.IModel>(panel.content.widgets.filter(cell => cell.model.type === 'code').map(cell => cell.model));

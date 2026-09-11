@@ -298,6 +298,50 @@ test('reopening an unexecuted file retains its manual selection and recreates it
   model.closeView();
 });
 
+for (const manual of [false, true]) {
+  test(`saved connection edits refresh ${manual ? 'manually selected' : 'default'} DOS previews, including password-only edits`, async () => {
+    let revision = 0;
+    const f = fixture({ metadata: async () => [{ path: `dfs://revision-${revision}`, tables: [] }] }); await f.manager.ready;
+    const model = f.manager.document('edited.dos'); model.open(); await model.initialize();
+    if (manual) { await model.select('other'); }
+    const selectedId = model.profile.id;
+    for (const change of [{ host: 'replacement-host', port: 18903 }, {}]) {
+      const previous = model.sdk, identity = model.browserIdentity(), count = f.previews.length;
+      revision++;
+      // Passwords never appear in public profiles: a password-only save returns
+      // a fresh snapshot with the same visible fields.
+      f.connections.state = { ...f.connections.state, connections: f.connections.state.connections.map(p => p.id === selectedId ? { ...p, ...change } : p) };
+      f.connections.changed.emit(); await tick();
+      assert.equal(previous.ddb.connected, false);
+      assert.equal(model.sdk.ddb.connected, true); assert.notEqual(model.sdk, previous);
+      assert.equal(f.previews.length, count + 1); assert.equal(model.sdk.id, selectedId);
+      assert.equal(model.databases[0].path, `dfs://revision-${revision}`);
+      assert.notEqual(model.browserIdentity(), identity);
+      f.connections.changed.emit(); await tick();
+      assert.equal(f.previews.length, count + 1, 'settings and notices must not reconnect');
+    }
+    model.closeView();
+  });
+}
+
+test('connection edits leave locked sessions and active debuggers fixed, and refresh the preview after debugging', async () => {
+  const session = { id: 'fixed', path: 'locked.dos', profile: profile('default', 'Original'), locked: true, attached: false, state: 'idle', executionCount: 0 };
+  const f = fixture({ sessions: [session] }); await f.manager.ready;
+  const locked = f.manager.document('locked.dos'); locked.open(); await locked.initialize();
+  const debug = f.manager.document('debug.dos'); debug.open(); await debug.initialize(); await debug.select('other');
+  debug.debugging = true;
+  const fixedSdk = locked.sdk, debugSdk = debug.sdk, count = f.previews.length;
+  f.connections.state = { ...f.connections.state, connections: f.profiles.map(p => ({ ...p, host: 'new-host' })) };
+  f.connections.changed.emit(); await tick();
+  assert.equal(locked.sdk, fixedSdk); assert.equal(locked.profile.host, 'localhost');
+  assert.equal(debug.sdk, debugSdk); assert.equal(debug.profile.host, 'localhost');
+  assert.equal(f.previews.length, count);
+  debug.debugging = false; await debug.syncConnection();
+  assert.equal(debug.profile.host, 'new-host'); assert.equal(debug.sdk.id, 'other');
+  assert.notEqual(debug.sdk, debugSdk); assert.equal(debugSdk.ddb.connected, false);
+  debug.closeView(); locked.closeView();
+});
+
 test('closing before the initial connection list arrives does not start a preview', async () => {
   const ready = deferred(); const f = fixture({ connectionReady: ready.promise });
   const model = f.manager.document('startup.dos'); model.open();
@@ -325,6 +369,6 @@ test('a default connection change cannot change the profile or preview of an act
   f.connections.state.activeId = 'other'; f.connections.changed.emit(); await tick();
   assert.equal(model.profile.id, 'default'); assert.equal(model.selection, 'default');
   assert.equal(f.previews.length, 1);
-  model.debugging = false; await model.useDefault(); assert.equal(model.profile.id, 'other');
+  model.debugging = false; await model.syncConnection(); assert.equal(model.profile.id, 'other');
   assert.equal(f.previews.length, 2); model.closeView();
 });

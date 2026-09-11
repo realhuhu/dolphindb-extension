@@ -74,38 +74,17 @@ class CompletionsService {
         if (symbolsInScope.length === 0)
             return completionItems
             
-        const notDuplicateSymbols: ISymbol[] = [ ]
-        const duplicateSymbols: ISymbol[] = [ ]
-        for (const symbol of symbolsInScope)
-            // 不要滤掉不重复的符号
-            if (!hasDuplicatesByKey(symbolsInScope, 'name'))
-                notDuplicateSymbols.push(symbol)
-            else
-                duplicateSymbols.push(symbol)
-                
-                
-        // 按作用域起始位置降序排序，起始位置越靠近当前位置的作用域越靠前
-        duplicateSymbols.sort((a, b) => {
-            const aStart = a.metadata!.scope[0]
-            const bStart = b.metadata!.scope[0]
-            if (aStart.line !== bStart.line)
-                return bStart.line - aStart.line
-                
-            return bStart.character - aStart.character
-        })
-        
-        // 获取最靠近的作用域起始位置
-        let closestSymbols: ISymbol[] = [ ]
-        if (duplicateSymbols.length > 0) {
-            const closestScopeStart = duplicateSymbols[0].metadata!.scope[0]
-            closestSymbols = duplicateSymbols.filter(symbol => {
-                const scopeStart = symbol.metadata!.scope[0]
-                return scopeStart.line === closestScopeStart.line && scopeStart.character === closestScopeStart.character
-            })
+        const nearestByName = new Map<string, ISymbol>()
+        for (const symbol of symbolsInScope) {
+            const previous = nearestByName.get(symbol.name)
+            const start = symbol.metadata!.scope[0]
+            const previousStart = previous?.metadata!.scope[0]
+            if (!previousStart || start.line > previousStart.line ||
+                start.line === previousStart.line && start.character >= previousStart.character)
+                nearestByName.set(symbol.name, symbol)
         }
-        
-        const symbolsToComplete = [...notDuplicateSymbols, ...closestSymbols]
-        
+        const symbolsToComplete = [...nearestByName.values()]
+
         // 生成补全项
         symbolsToComplete.forEach(symbol => {
             if (symbol.type === SymbolType.Variable && symbol.metadata) {
@@ -365,17 +344,6 @@ function isPositionInScope (pos: Position, scope: [Position, Position]) {
     return true
 }
 
-function hasDuplicatesByKey (arr, key) {
-    const seen = new Map() // 或使用普通对象 {}  但 Map 效率更高
-    
-    for (const item of arr) {
-        if (seen.has(item[key]))
-            return true
-            
-        seen.set(item[key], item)
-    }
-    return false
-}
 
 return new CompletionsService();
 }

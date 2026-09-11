@@ -111,14 +111,14 @@ export default {
         const model = manager.document(context.path);
         const unbindLanguage = languageEditors.bind(widget.content.editor.model, {
           path: () => context.path, source: () => getSource(widget), project: (source, offset) => projection(source, offset, true),
-          metadata: dosMetadata(model), identity: () => `${model.profile?.id}:${model.session?.id ?? 'preview'}:${model.session?.executionCount ?? 0}`,
+          metadata: dosMetadata(model), identity: () => `${model.browserIdentity()}:${model.session?.executionCount ?? 0}`,
           open: async (uri, range) => {
             const target = documents.openOrReveal(uri, 'Editor') as EditorWidget | undefined;
             if (!target) { return; } await target.context.ready;
             target.content.editor.setSelection({ start: { line: range.start.line, column: range.start.character }, end: { line: range.end.line, column: range.end.character } });
             target.content.editor.focus();
           },
-        });
+        }, () => widget.content.editor.host);
         models.set(widget, model);
         model.open();
         const isCurrent = () => !widget.isDisposed && app.shell.currentWidget === widget;

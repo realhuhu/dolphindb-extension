@@ -63,12 +63,18 @@ def _type(values):
     return "DECIMAL" if isinstance(sample, Decimal) else "DOUBLE" if isinstance(sample, (float, np.floating)) else "OBJECT"
 
 
-def _grid(frame):
+def _grid(frame, index_labels=None):
     from .metadata import _table_preview
 
     result = _table_preview(frame)
     result["rows"] = [[_scalar(value) for value in row] for row in frame.itertuples(index=False, name=None)]
     result["columnTypes"] = [_type(frame.iloc[:, index]) for index in range(len(frame.columns))]
+    if index_labels is not None:
+        # Rank native index values before formatting their labels. This also
+        # preserves full MultiIndex tuples rather than summarizing them as objects.
+        for row, label in zip(result["rows"], index_labels):
+            row[0] = str(label)
+        result["columnTypes"][0] = "OBJECT"
     return result
 
 
@@ -133,8 +139,9 @@ def value_page(value, request, form_hint=None):
         frame = value if isinstance(value, pd.DataFrame) else pd.DataFrame(value, columns=column_labels, index=row_labels)
         column_limit = request.get("columnLimit", 50)
         selected = frame.iloc[start:start + limit, col:col + column_limit].copy()
-        selected.insert(0, "索引", list(map(str, selected.index)), allow_duplicates=True)
-        grid = _grid(selected)
+        # Avoid list inference rounding large integers when labels include floats or missing values.
+        selected.insert(0, "索引", selected.index.to_numpy(dtype=object), allow_duplicates=True)
+        grid = _grid(selected, index_labels=selected.index)
         grid["totalRows"], grid["totalColumns"] = len(frame), len(frame.columns) + 1
         result = {"form": "MATRIX" if matrix else "TABLE", "type": "MATRIX" if matrix else "TABLE", "count": len(frame),
                   "columnCount": len(frame.columns), "grid": grid}
@@ -163,9 +170,9 @@ def value_page(value, request, form_hint=None):
     if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
         selected = value.iloc[start:start + limit] if isinstance(value, pd.Series) else None
         items = list(selected) if selected is not None else list(islice(iter(value), start, start + limit))
-        indexes = list(map(str, selected.index)) if selected is not None else list(range(start, start + len(items)))
+        indexes = selected.index.to_numpy(dtype=object) if selected is not None else list(range(start, start + len(items)))
         frame = pd.DataFrame({"索引": indexes, "值": pd.Series(items, dtype=object)})
-        grid = _grid(frame)
+        grid = _grid(frame, index_labels=indexes if selected is not None else None)
         grid["columnTypes"][1] = _type(value)
         grid["totalRows"] = len(value)
         return {"form": form_hint or ("SET" if isinstance(value, set) else "VECTOR"), "type": _type(value), "count": len(value), "grid": grid,

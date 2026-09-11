@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0b1 - 2026-09-11
+
+- Refresh unlocked DOS previews after editing saved connections, including password-only changes, while retaining locked execution and debug sessions.
+- Invalidate unlocked Notebook preview browsers, pending reads and language metadata on connection reconfiguration, including changes initiated from another view; keep locked sessions and Python result snapshots stable.
+- Preserve per-view language bindings, completion, highlighting and definition navigation across cloned and windowed Notebook editors.
+- Resolve local completion shadowing per name so reassignment does not hide unrelated variables or parameters; record the adaptation in upstream provenance.
+- Enable imported debug source windows to route breakpoints and control shortcuts to their owning DOS session, using separate valid Lumino key and context-menu registrations.
+- Sort Python DataFrame and Series indexes by their original values while retaining numeric precision (including large integers mixed with floats or missing values), duplicate labels, timezone indexes and MultiIndex display.
+- Organize installation, connections, DOS, Notebook, data browsing, language, debugging, all settings, architecture, troubleshooting, migration and release documentation; add clean runnable examples and documentation checks.
+
 ## 0.1.0a7 - 2026-09-11
 
 - Add a DOS-only debugger with a dedicated D-and-bug sidebar button below the database/variables panel, reusing the official VS Code extension's debug WebSocket protocol and binary codec.

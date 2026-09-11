@@ -47,6 +47,8 @@ jobs:
         run: |
           uv run --extra notebook ruff check src scripts tests
           uv run --extra notebook pytest -q
+      - name: Check documentation and clean examples
+        run: uv run --extra notebook python scripts/check_docs.py
       - name: Build distributions
         run: uv build --no-sources
       - name: Check package metadata and README

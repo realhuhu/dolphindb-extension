@@ -47,6 +47,7 @@ export class DosModel {
   session: SessionInfo | null = null;
   connection: DdbConnection | null = null;
   private preview: DdbConnection | null = null;
+  private previewState: ConnectionModel['state'] | null = null;
   private generation = 0;
   private browseCache = new Map<string, DdbObj>();
   private browseVersion = '';
@@ -91,7 +92,7 @@ export class DosModel {
       : this.loading ? '连接中' : this.locked ? '会话就绪' : '尚未运行';
   }
   get sdk(): DdbConnection | null { return this.connection ?? this.preview; }
-  browserIdentity(): string { return `${this.profile?.id}:${this.session?.id ?? 'preview'}`; }
+  browserIdentity(): string { return `${this.profile?.id}:${this.session?.id ?? `preview:${this.generation}`}`; }
 
   async browse(target: DataTarget, request: BrowseRequest): Promise<DataPage> {
     const connection = this.sdk, generation = this.generation, execution = this.session?.executionCount, identity = this.browserIdentity();
@@ -146,15 +147,16 @@ export class DosModel {
       if (!this.views) { return; }
       const existing = this.manager.sessions.find(s => s.path === this.path);
       if (existing) { this.session = existing; await this.restore(); }
-      else if (this.followsDefault) { await this.useDefault(); }
-      else { await this.loadPreview(); }
+      else { await this.syncConnection(); }
     })().catch(error => { this.notice = errorText(error); this.changed.emit(); });
   }
 
-  async useDefault(): Promise<void> {
-    if (!this.followsDefault || this.session || this.busy || this.debugging) { return; }
-    const id = this.manager.defaultProfile?.id ?? null;
-    if (id !== this.selectedId || (!this.preview && !this.loading)) {
+  async syncConnection(): Promise<void> {
+    if (this.session || this.busy || this.debugging) { return; }
+    const id = this.followsDefault ? this.manager.defaultProfile?.id ?? null : this.selectedId;
+    // A saved snapshot also covers password-only edits, which are deliberately
+    // absent from public profiles. Settings/notice signals keep the same snapshot.
+    if (id !== this.selectedId || this.previewState !== this.manager.connections.state || (!this.preview && !this.loading)) {
       this.selectedId = id;
       await this.loadPreview();
     }
@@ -177,6 +179,7 @@ export class DosModel {
   async loadPreview(): Promise<void> {
     // A cached document can follow default changes without holding a socket.
     if (!this.views || this.session || this.busy || this.debugging) { return; }
+    this.previewState = this.manager.connections.state;
     const generation = ++this.generation;
     this.browseCache.clear();
     this.preview?.disconnect();
@@ -297,7 +300,7 @@ export class DosModel {
       this.busy = false;
       this.loading = false;
       if (this.notice?.startsWith('已发送中断请求')) { this.notice = null; }
-      if (!this.session && this.views) { void this.useDefault(); }
+      if (!this.session && this.views) { void this.syncConnection(); }
       this.changed.emit();
       await this.manager.refresh();
     }
@@ -408,7 +411,7 @@ export class DosManager {
   constructor(readonly connections: ConnectionModel) {
     this.ready = (async () => { await connections.refresh(); await this.refresh(); })();
     connections.changed.connect(() => {
-      for (const model of this.documents.values()) { void model.useDefault(); model.changed.emit(); }
+      for (const model of this.documents.values()) { void model.syncConnection(); model.changed.emit(); }
     });
     window.setInterval(() => { void this.refresh(); }, 2500);
   }

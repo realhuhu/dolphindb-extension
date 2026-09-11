@@ -34,33 +34,47 @@ const markdownText = (content: CompletionItem['documentation']): string => typeo
 
 /** Standard CodeMirror extensions, registered through Jupyter's editor extension registry. */
 export class LanguageEditors {
-  private bindings = new WeakMap<CodeEditor.IModel, LanguageBinding>();
-  private views = new WeakMap<CodeEditor.IModel, EditorView>();
+  private bindings = new WeakMap<CodeEditor.IModel, Set<{ binding: LanguageBinding; host?: () => HTMLElement | undefined }>>();
+  private views = new WeakMap<CodeEditor.IModel, Set<EditorView>>();
   active: { model: CodeEditor.IModel; view: EditorView } | null = null;
   constructor(readonly engine: LanguageEngine, readonly settings: SettingsModel, private rendermime: IRenderMimeRegistry, private language: LanguageSupport) {}
-  bind(model: CodeEditor.IModel, binding: LanguageBinding): () => void {
-    this.bindings.set(model, binding);
-    if (binding.path().toLowerCase().endsWith('.dos')) { this.engine.modules.open.set(model, binding); }
+  bind(model: CodeEditor.IModel, binding: LanguageBinding, host?: () => HTMLElement | undefined): () => void {
+    const entries = this.bindings.get(model) ?? new Set(), entry = { binding, host };
+    entries.add(entry); this.bindings.set(model, entries);
+    if (binding.path().toLowerCase().endsWith('.dos')) { this.engine.modules.open.set(entry, binding); }
     this.refreshBinding(model);
     return () => {
-      if (this.bindings.get(model) === binding) {
-        this.bindings.delete(model); this.engine.modules.open.delete(model); this.refreshBinding(model);
+      if (entries.delete(entry)) {
+        if (!entries.size) { this.bindings.delete(model); }
+        this.engine.modules.open.delete(entry); this.refreshBinding(model);
       }
     };
   }
   private refreshBinding(model: CodeEditor.IModel) {
     // Notebook cells can be bound after their editor is created. Defer to avoid
     // dispatching during a shared-model/editor update, including on unbind.
-    queueMicrotask(() => this.views.get(model)?.dispatch({ effects: bindingEffect.of(null) }));
+    queueMicrotask(() => {
+      for (const view of this.views.get(model) ?? []) { view.dispatch({ effects: bindingEffect.of(null) }); }
+    });
   }
-  private current(model: CodeEditor.IModel, source: string, offset: number) {
-    const binding = this.bindings.get(model);
+  private viewFor(model: CodeEditor.IModel): EditorView | undefined {
+    const views = this.views.get(model);
+    return [...views ?? []].find(view => view.hasFocus)
+      ?? (this.active?.model === model && views?.has(this.active.view) ? this.active.view : views?.values().next().value);
+  }
+  private bindingFor(model: CodeEditor.IModel, view = this.viewFor(model)): LanguageBinding | undefined {
+    // Cloned notebooks share cell models. Resolve callbacks against the editor
+    // that initiated the request, including editors recreated by windowing.
+    return [...this.bindings.get(model) ?? []].find(entry => !entry.host || view && entry.host()?.contains(view.dom))?.binding;
+  }
+  private current(model: CodeEditor.IModel, source: string, offset: number, view?: EditorView) {
+    const binding = this.bindingFor(model, view);
     const projection = binding?.project(source, offset);
     return binding && projection ? { binding, projection } : null;
   }
-  complete(model: CodeEditor.IModel): boolean { const view = this.views.get(model); return view ? startCompletion(view) : false; }
+  complete(model: CodeEditor.IModel): boolean { const view = this.viewFor(model); return view ? startCompletion(view) : false; }
   async jump(view: EditorView, model: CodeEditor.IModel): Promise<void> {
-    const current = this.current(model, view.state.doc.toString(), view.state.selection.main.head);
+    const current = this.current(model, view.state.doc.toString(), view.state.selection.main.head, view);
     if (!current) { return; }
     const locations = await this.engine.definitions(current.binding, current.projection);
     if (locations.length) { await current.binding.open(locations[0].uri, locations[0].range); }
@@ -70,7 +84,7 @@ export class LanguageEditors {
     if (!active) { return null; }
     const source = active.view.state.doc.toString();
     const region = ddbRegions(source, active.model.mimeType === 'text/x-dolphindb' && !/^%%ddb\b/.test(source))[0];
-    const current = region && this.current(active.model, source, region.from);
+    const current = region && this.current(active.model, source, region.from, active.view);
     return current ? { binding: current.binding, items: await this.engine.outline(current.binding, current.projection) } : null;
   }
   private renderMarkdown(markdown: string) {
@@ -118,10 +132,10 @@ export class LanguageEditors {
   }
   extension(model: CodeEditor.IModel): Extension {
     const owner = this;
-    const start = (view: EditorView): boolean => owner.current(model, view.state.doc.toString(), view.state.selection.main.head)
-      ? startCompletion(view) : owner.bindings.get(model)?.nativeComplete?.() ?? false;
+    const start = (view: EditorView): boolean => owner.current(model, view.state.doc.toString(), view.state.selection.main.head, view)
+      ? startCompletion(view) : owner.bindingFor(model, view)?.nativeComplete?.() ?? false;
     const source = async (context: CompletionContext) => {
-      const current = owner.current(model, context.state.doc.toString(), context.pos);
+      const current = owner.current(model, context.state.doc.toString(), context.pos, context.view);
       if (!current || !context.explicit && !owner.settings.value.language.automaticCompletion) { return null; }
       const before = current.projection.source.slice(0, current.projection.offset);
       if (!context.explicit && !/[\w\u4e00-\u9fff.:"'` ]$/.test(before)) { return null; }
@@ -131,7 +145,7 @@ export class LanguageEditors {
       return { from: result.from, to: result.to, options: result.items.map(item => owner.item(item, current.projection)) };
     };
     const signature = async (view: EditorView) => {
-      const current = owner.current(model, view.state.doc.toString(), view.state.selection.main.head);
+      const current = owner.current(model, view.state.doc.toString(), view.state.selection.main.head, view);
       if (!current || !view.hasFocus) { return null; }
       const docs = await documentation(owner.settings.value.language.documentationLanguage);
       const text = current.projection.source.slice(0, current.projection.offset).split('\n').slice(-31).join('\n');
@@ -155,6 +169,8 @@ export class LanguageEditors {
     const decorations = (view: EditorView): DecorationSet => {
       // Use the current text: Jupyter updates the MIME type after this view update
       // when a user edits %%ddb into %ddb (or vice versa).
+      // A windowed cell's host getter is unavailable until its editor constructor
+      // finishes. Highlighting only depends on the shared text/model binding.
       if (!owner.bindings.has(model)) { return Decoration.none; }
       const text = view.state.doc.toString(), marks: { from: number; to: number; value: Decoration }[] = [];
       for (const region of ddbRegions(text).filter(r => r.kind === 'line')) {
@@ -172,12 +188,12 @@ export class LanguageEditors {
         { key: 'Shift-Tab', run: view => hasPrevSnippetField(view.state) ? prevSnippetField(view) : false },
         ...completionKeymap.filter(binding => binding.key !== 'Ctrl-Space'),
         { key: 'Ctrl-Space', run: start },
-        { key: 'Mod-Shift-Space', run: view => { void signature(view).then(value => view.dispatch({ effects: signatureEffect.of(value) })); return Boolean(owner.current(model, view.state.doc.toString(), view.state.selection.main.head)); } },
-        { key: 'F12', run: view => { const current = owner.current(model, view.state.doc.toString(), view.state.selection.main.head); if (!current) { return false; } void owner.jump(view, model); return true; } },
+        { key: 'Mod-Shift-Space', run: view => { void signature(view).then(value => view.dispatch({ effects: signatureEffect.of(value) })); return Boolean(owner.current(model, view.state.doc.toString(), view.state.selection.main.head, view)); } },
+        { key: 'F12', run: view => { const current = owner.current(model, view.state.doc.toString(), view.state.selection.main.head, view); if (!current) { return false; } void owner.jump(view, model); return true; } },
       ])),
       hoverTooltip(async (view, position) => {
         if (!owner.settings.value.language.hoverDocumentation) { return null; }
-        const current = owner.current(model, view.state.doc.toString(), position);
+        const current = owner.current(model, view.state.doc.toString(), position, view);
         if (!current) { return null; }
         const line = view.state.doc.lineAt(position);
         const word = [...line.text.matchAll(/[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*!?/g)].find(m => m.index! + line.from <= position && m.index! + line.from + m[0].length >= position);
@@ -191,7 +207,7 @@ export class LanguageEditors {
         if (!owner.settings.value.language.diagnostics) { return []; }
         const text = view.state.doc.toString();
         const region = ddbRegions(text, model.mimeType === 'text/x-dolphindb' && !/^%%ddb\b/.test(text))[0];
-        const current = region && owner.current(model, text, region.from);
+        const current = region && owner.current(model, text, region.from, view);
         if (!current) { return []; }
         const doc = TextDocument.create('', '', 0, current.projection.source);
         const diagnostics = await owner.engine.diagnostics(current.binding, current.projection);
@@ -209,7 +225,8 @@ export class LanguageEditors {
         timer: ReturnType<typeof setTimeout> | undefined;
         generation = 0;
         constructor(readonly view: EditorView) {
-          owner.views.set(model, view); this.decorations = decorations(view);
+          const views = owner.views.get(model) ?? new Set(); views.add(view); owner.views.set(model, views);
+          this.decorations = decorations(view);
           owner.settings.changed.connect(this.settingsChanged, this);
         }
         private settingsChanged(): void {
@@ -231,7 +248,12 @@ export class LanguageEditors {
             }); }, 80);
           }
         }
-        destroy() { owner.settings.changed.disconnect(this.settingsChanged, this); this.generation++; clearTimeout(this.timer); owner.views.delete(model); if (owner.active?.view === this.view) { owner.active = null; } }
+        destroy() {
+          owner.settings.changed.disconnect(this.settingsChanged, this); this.generation++; clearTimeout(this.timer);
+          const views = owner.views.get(model); views?.delete(this.view);
+          if (!views?.size) { owner.views.delete(model); }
+          if (owner.active?.view === this.view) { owner.active = null; }
+        }
       }, { decorations: plugin => plugin.decorations })),
     ];
   }

@@ -25,7 +25,10 @@ export class NotebookConnection {
   languageRevision = 0;
   browserOwner = '';
   sessionId = '';
-  browserIdentity(): string { return `${this.context.session?.kernel?.id}:${this.profile?.id}:${this.sessionId}`; }
+  private previewRevision = 0;
+  browserIdentity(): string {
+    return `${this.context.session?.kernel?.id}:${this.profile?.id}:${this.locked ? this.sessionId : `preview:${this.previewRevision}`}`;
+  }
   databases: DatabaseEntry[] = [];
   variables: VariableEntry[] = [];
   databaseError: string | null = null;
@@ -158,7 +161,10 @@ export class NotebookConnection {
         if (data.kind !== 'state') { return; }
         this.browserOwner = data.browserOwner ?? '';
         this.sessionId = data.sessionId ?? '';
-        const changed = this.busy && !data.busy || this.profile?.id !== data.profile?.id || this.locked !== data.locked;
+        const configuring = this.loading !== data.configuring;
+        const changed = this.busy && !data.busy || this.profile?.id !== data.profile?.id || this.locked !== data.locked || configuring;
+        // Another view can reconfigure this kernel without changing the public profile ID.
+        if (!data.locked && configuring) { this.previewRevision++; }
         if (changed) { this.languageRevision++; this.panelDirty = true; }
         if (this.profile?.id !== data.profile?.id || this.locked && !data.locked) { this.clearPanels(); }
         this.profile = data.profile;
@@ -199,6 +205,8 @@ export class NotebookConnection {
   async select(id: string): Promise<void> {
     const comm = this.comm;
     if (!comm || this.locked || this.busy || this.disposed) { return; }
+    this.previewRevision++;
+    this.languageRevision++;
     this.clearPanels();
     this.rejectMetadata();
     this.followsDefault = !id;
@@ -320,9 +328,9 @@ export class NotebookConnection {
   }
 
   async browse(target: DataTarget, query: BrowseRequest): Promise<DataPage> {
-    const generation = this.generation, revision = this.languageRevision;
+    const generation = this.generation, revision = this.languageRevision, identity = this.browserIdentity();
     const page = await this.metadata('browse', { target: JSON.stringify(target), request: JSON.stringify(query) }) as DataPage;
-    if (this.disposed || generation !== this.generation || target.kind !== 'result' && revision !== this.languageRevision) { throw new Error('会话已变化，请刷新。'); }
+    if (this.disposed || generation !== this.generation || target.kind !== 'result' && (revision !== this.languageRevision || identity !== this.browserIdentity())) { throw new Error('会话已变化，请刷新。'); }
     return page;
   }
 

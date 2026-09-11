@@ -8,6 +8,7 @@ import { IRunningSessionManagers } from '@jupyterlab/running';
 import { IStateDB } from '@jupyterlab/statedb';
 import { Debugger } from '@jupyterlab/debugger';
 import { Signal } from '@lumino/signaling';
+import type { ReadonlyPartialJSONObject } from '@lumino/coreutils';
 import { request, socketUrl, type SessionTicket } from '../api';
 import { IDosManager } from '../tokens';
 import type { DosManager, DosModel } from '../dos/model';
@@ -30,7 +31,7 @@ export default {
     palette: ICommandPalette | null, restorer: ILayoutRestorer | null, labShell: ILabShell | null, running: IRunningSessionManagers | null, themeManager: IThemeManager | null, state: IStateDB | null) => {
     const sessions = new Map<DosModel, DosDebugSession>();
     const bindings = new Map<EditorWidget, { session: DosDebugSession; handler: DebugEditor; readOnly?: boolean }>();
-    const sourceWidgets = new Map<string, { widget: MainAreaWidget<CodeEditorWrapper>; session: DosDebugSession; source: DebugSource }>();
+    const sourceWidgets = new Map<string, { widget: MainAreaWidget<CodeEditorWrapper>; session: DosDebugSession; source: DebugSource; handler: DebugEditor }>();
     const changed = new Signal<object, void>(sessions);
     let saved: SavedDebug = {}, saveTimer: ReturnType<typeof setTimeout> | undefined;
     const ready = state?.fetch(stateKey).then(value => {
@@ -45,7 +46,11 @@ export default {
       const widget = app.shell.currentWidget as EditorWidget;
       return bindings.has(widget) && widget.context.path.toLowerCase().endsWith('.dos') ? widget : null;
     };
-    const active = () => { const widget = activeWidget(); return widget ? bindings.get(widget)!.session : null; };
+    const activeBinding = () => {
+      const widget = activeWidget();
+      return widget ? bindings.get(widget) : [...sourceWidgets.values()].find(view => !view.widget.isDisposed && view.widget === app.shell.currentWidget);
+    };
+    const active = () => activeBinding()?.session ?? null;
     const modelFor = (session: DosDebugSession) => [...sessions].find(([, value]) => value === session)?.[0];
     const editorFor = (session: DosDebugSession) => {
       const current = activeWidget();
@@ -69,10 +74,17 @@ export default {
       if (!widget || widget.isDisposed) {
         const editor = new Debugger.ReadOnlyEditorFactory({ editorServices }).createNewEditor({ content, mimeType: DOS_MIME, path });
         widget = new MainAreaWidget({ content: editor }); widget.id = `ddb-debug-source-${crypto.randomUUID()}`;
+        widget.addClass('ddb-debug-source-editor');
         widget.title.label = path.split('/').pop()!; widget.title.caption = `调试源码 · ${path}`; widget.title.icon = debugIcon;
         const handler = new DebugEditor(editor.editor, session, () => path, save);
-        widget.disposed.connect(() => { handler.dispose(); if (sourceWidgets.get(path)?.widget === widget) { sourceWidgets.delete(path); } });
-        sourceWidgets.set(path, { widget, session, source }); app.shell.add(widget, 'main');
+        const focused = () => { panel.setSession(session); notify(); };
+        editor.node.addEventListener('focusin', focused);
+        widget.disposed.connect(() => {
+          handler.dispose(); editor.node.removeEventListener('focusin', focused);
+          if (sourceWidgets.get(path)?.widget === widget) { sourceWidgets.delete(path); }
+          notify();
+        });
+        sourceWidgets.set(path, { widget, session, source, handler }); app.shell.add(widget, 'main');
       }
       app.shell.activateById(widget.id);
       if (line >= 0 && line < widget.content.editor.lineCount) { widget.content.editor.setCursorPosition({ line, column: 0 }); widget.content.editor.revealPosition({ line, column: 0 }); }
@@ -84,16 +96,17 @@ export default {
     const start = async (session: DosDebugSession | null) => {
       const widget = session && editorFor(session), model = session && modelFor(session);
       if (!widget || !session || !model || model.executing || model.loading || model.pathError) { return; }
+      if (session.paused) { panel.setSession(session); await session.control('continueRun'); return; }
       app.shell.activateById(widget.id);
       panel.setSession(session); show();
-      if (session.paused) { await session.control('continueRun'); return; }
       if (session.active) { return; }
       if (!model.profile) { throw new Error('请先为此 DOS 文件选择 DolphinDB 连接。'); }
       await session.start(model.profile);
     };
     const selected = () => panel.session;
-    const add = (id: string, label: string, execute: () => unknown, enabled: () => boolean, icon?: typeof debugIcon) => {
-      app.commands.addCommand(id, { label, execute, isEnabled: enabled, icon }); palette?.addItem({ command: id, category: 'DolphinDB 调试' });
+    const target = (args: ReadonlyPartialJSONObject) => args.fromEditor === true ? active() : selected();
+    const add = (id: string, label: string, execute: (session: DosDebugSession | null) => unknown, enabled: (session: DosDebugSession | null) => boolean, icon?: typeof debugIcon) => {
+      app.commands.addCommand(id, { label, execute: args => execute(target(args)), isEnabled: args => enabled(target(args)), icon }); palette?.addItem({ command: id, category: 'DolphinDB 调试' });
     };
     app.commands.addCommand(ids.start, {
       label: 'DolphinDB: 开始调试 DOS', icon: debugIcon,
@@ -104,24 +117,28 @@ export default {
       },
     });
     palette?.addItem({ command: ids.start, category: 'DolphinDB 调试' });
-    app.commands.addCommand(ids.resume, { label: () => selected()?.paused ? '继续（F5）' : '暂停', icon: () => selected()?.paused ? runIcon : pauseIcon,
-      isEnabled: () => Boolean(selected()?.active && !selected()?.pending), execute: () => selected()?.control(selected()?.paused ? 'continueRun' : 'pauseRun') });
-    add(ids.stop, '停止调试（Shift + F5）', () => selected()?.stop(), () => Boolean(selected()?.active), stopIcon);
-    add(ids.next, '逐过程（F10）', () => selected()?.control('stepOver'), () => Boolean(selected()?.paused && !selected()?.pending), Debugger.Icons.stepOverIcon);
-    add(ids.stepIn, '单步进入（F11）', () => selected()?.control('stepInto'), () => Boolean(selected()?.paused && !selected()?.pending), Debugger.Icons.stepIntoIcon);
-    add(ids.stepOut, '单步跳出（Shift + F11）', () => selected()?.control('stepOut'), () => Boolean(selected()?.paused && !selected()?.pending), Debugger.Icons.stepOutIcon);
-    add(ids.restart, '重新调试（Ctrl + Shift + F5）', async () => {
-      const session = selected(); if (!session) { return; }
+    app.commands.addCommand(ids.resume, { label: args => target(args)?.paused ? '继续（F5）' : '暂停', icon: args => target(args)?.paused ? runIcon : pauseIcon,
+      isEnabled: args => Boolean(target(args)?.active && !target(args)?.pending), execute: args => { const session = target(args); return session?.control(session.paused ? 'continueRun' : 'pauseRun'); } });
+    add(ids.stop, '停止调试（Shift + F5）', session => session?.stop(), session => Boolean(session?.active), stopIcon);
+    add(ids.next, '逐过程（F10）', session => session?.control('stepOver'), session => Boolean(session?.paused && !session?.pending), Debugger.Icons.stepOverIcon);
+    add(ids.stepIn, '单步进入（F11）', session => session?.control('stepInto'), session => Boolean(session?.paused && !session?.pending), Debugger.Icons.stepIntoIcon);
+    add(ids.stepOut, '单步跳出（Shift + F11）', session => session?.control('stepOut'), session => Boolean(session?.paused && !session?.pending), Debugger.Icons.stepOutIcon);
+    add(ids.restart, '重新调试（Ctrl + Shift + F5）', async session => {
+      if (!session) { return; }
       const model = modelFor(session)!; await session.stop();
       if (model.profile && !model.executing && !model.pathError) { await session.start(model.profile); }
-    }, () => Boolean(selected()?.active && !selected()?.pending), refreshIcon);
-    add(ids.toggle, '切换 DOS 断点（F9）', () => { const widget = activeWidget(); if (widget) { bindings.get(widget)!.handler.toggle(); } }, () => Boolean(active()), debugIcon);
+    }, session => Boolean(session?.active && !session?.pending), refreshIcon);
+    add(ids.toggle, '切换 DOS 断点（F9）', () => activeBinding()?.handler.toggle(), () => Boolean(active()), debugIcon);
     add(ids.show, 'DolphinDB: 显示调试面板', show, () => true, debugIcon);
+    const editorSelectors = ['.ddb-dos-editor .cm-content', '.ddb-debug-source-editor .cm-content'];
     for (const [keys, command] of [[['F5'], ids.start], [['F9'], ids.toggle], [['F10'], ids.next], [['F11'], ids.stepIn], [['Shift F11'], ids.stepOut], [['Shift F5'], ids.stop], [['Ctrl Shift F5'], ids.restart]] as const) {
-      app.commands.addKeyBinding({ keys: [...keys], command, selector: '.ddb-dos-editor .cm-content' });
+      // Lumino key bindings accept one selector per registration.
+      for (const selector of editorSelectors) {
+        app.commands.addKeyBinding({ keys: [...keys], command, args: { fromEditor: true }, selector });
+      }
     }
     app.contextMenu.addItem({ command: ids.start, selector: '.ddb-dos-editor .cm-content', rank: 3 });
-    app.contextMenu.addItem({ command: ids.toggle, selector: '.ddb-dos-editor .cm-content', rank: 4 });
+    for (const selector of editorSelectors) { app.contextMenu.addItem({ command: ids.toggle, selector, rank: 4 }); }
 
     const bindingPromises = new Map<EditorWidget, Promise<void>>();
     function bind(widget: EditorWidget): Promise<void> {
@@ -141,7 +158,7 @@ export default {
             url: socketUrl,
             locked: active => {
               model.debugging = active; model.changed.emit();
-              if (!active) { void model.useDefault(); }
+              if (!active) { void model.syncConnection(); }
               for (const [view, binding] of bindings) {
                 if (binding.session !== session || view.isDisposed) { continue; }
                 if (active) { binding.readOnly = Boolean(view.content.editor.getOption('readOnly')); view.content.editor.setOption('readOnly', true); }

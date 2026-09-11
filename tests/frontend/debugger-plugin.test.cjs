@@ -17,11 +17,31 @@ const pluginCode = ts.transpileModule(fs.readFileSync(pluginFile, 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 
+// Use Lumino's actual registration code, including selector validation. Only
+// DOM matching and menu rendering are stubbed in this Node-only fixture.
+function registrations() {
+  const dom = { Platform: { IS_WIN: true, IS_MAC: false }, Selector: { isValid: () => true } };
+  const load = (code, mocks) => {
+    const module = { exports: {} };
+    vm.runInNewContext(code, { module, exports: module.exports, setTimeout, clearTimeout,
+      require: id => mocks[id] ?? require(id) });
+    return module.exports;
+  };
+  const { CommandRegistry } = load(fs.readFileSync(require.resolve('@lumino/commands'), 'utf8'), { '@lumino/domutils': dom });
+  const file = path.resolve(__dirname, '../../node_modules/@lumino/widgets/src/contextmenu.ts');
+  const { ContextMenu } = load(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, { '@lumino/domutils': dom, './menu': { Menu: class {} } });
+  const registry = new CommandRegistry();
+  return { registry, contextMenu: new ContextMenu({ commands: registry }) };
+}
+
 /** Run the real plugin and session against a fake transport and minimal Jupyter widgets. */
 async function fixture(paths, saved = {}) {
   const sdk = await import('dolphindb/browser.js'), { DosDebugSession } = dataLoader(sdk)('debugger/session');
-  const instances = [], handlers = [], starts = [], opened = [], errors = [];
+  const instances = [], handlers = [], starts = [], opened = [], errors = [], calls = [], keyBindings = [];
   const configuration = { modules: {}, source: async () => 'old module' };
+  const { registry, contextMenu } = registrations();
   const commands = new Map(), models = new Map();
   let panel;
   class Session {
@@ -29,6 +49,7 @@ async function fixture(paths, saved = {}) {
       const session = new DosDebugSession(file, host, url => {
         let source;
         return { connect: async () => {}, close() {}, call: async (func, args) => {
+          calls.push({ path: file, func, args });
           if (func === 'parseScriptWithDebug') { source = args[0]; return { modules: configuration.modules }; }
           if (func === 'setBreaks') { return [args[0], args[1]]; }
           if (func === 'runScriptWithDebug') { starts.push({ path: file, connection: url, source }); }
@@ -52,13 +73,14 @@ async function fixture(paths, saved = {}) {
     revealPosition() {}
   }
   class DebugEditor {
-    constructor(editor, session) { this.editor = editor; this.session = session; handlers.push(this); }
+    constructor(editor, session, path) { this.editor = editor; this.session = session; this.path = path; this.toggles = 0; handlers.push(this); }
     dispose() { this.disposed = true; }
     reveal() {}
-    toggle() {}
+    toggle() { this.toggles++; }
   }
   class Widget {
-    constructor(content) { this.content = content; this.title = {}; this.isDisposed = false; this.disposed = new Signal(this); }
+    constructor(content) { this.content = content; this.title = {}; this.classes = new Set(); this.isDisposed = false; this.disposed = new Signal(this); }
+    addClass(name) { this.classes.add(name); }
     dispose() { if (!this.isDisposed) { this.isDisposed = true; this.disposed.emit(); } }
   }
   class MainWidget extends Widget { constructor({ content }) { super(content); } }
@@ -70,7 +92,7 @@ async function fixture(paths, saved = {}) {
   class Factory { createNewEditor({ content: source }) { return content(source); } }
   const widgets = paths.map((file, index) => {
     if (!models.has(file)) {
-      const model = { path: file, profile: { id: file, name: file }, useDefault: async () => {} };
+      const model = { path: file, profile: { id: file, name: file }, syncConnection: async () => {} };
       model.changed = new Signal(model); models.set(file, model);
     }
     const widget = new Widget(content('program from ' + file)); widget.id = 'view-' + index;
@@ -83,8 +105,8 @@ async function fixture(paths, saved = {}) {
       if (widget && this.currentWidget !== widget) { this.currentWidget = widget; this.currentChanged.emit(); }
     } };
   shell.currentChanged = new Signal(shell);
-  const app = { shell, contextMenu: { addItem() {} }, commands: { addCommand: (id, command) => commands.set(id, command),
-    hasCommand: id => commands.has(id), notifyCommandChanged() {}, addKeyBinding() {} } };
+  const app = { shell, contextMenu, commands: { addCommand: (id, command) => commands.set(id, command),
+    hasCommand: id => commands.has(id), notifyCommandChanged() {}, addKeyBinding(binding) { registry.addKeyBinding(binding); keyBindings.push(binding); } } };
   const mocks = {
     '@jupyterlab/apputils': { MainAreaWidget: MainWidget, showErrorMessage: (_title, error) => { errors.push(error); } },
     '@jupyterlab/debugger': { Debugger: { ReadOnlyEditorFactory: Factory, Icons: {} } },
@@ -99,7 +121,7 @@ async function fixture(paths, saved = {}) {
   module.exports.default.activate(app, { document: file => models.get(file) }, editors, {}, {}, {}, null, null, shell, null, null,
     { fetch: async () => saved, save: async () => {} });
   await tick(); assert.deepEqual(errors, []);
-  return { instances, handlers, starts, opened, errors, configuration, models, widgets, panel, commands, shell,
+  return { instances, handlers, starts, opened, errors, configuration, models, widgets, panel, commands, shell, calls, keyBindings,
     activate: index => shell.activateById(widgets[index].id),
     close: async () => { await Promise.all(instances.map(session => session.stop())); } };
 }
@@ -166,4 +188,38 @@ test('a delayed module source reply cannot open a window for a replaced debug ru
   f.configuration.source = async () => 'current module';
   await f.panel.options.open(session, sourcePath);
   assert.equal(f.opened[0].content.model.sharedModel.getSource(), 'current module');
+});
+
+test('imported debug source shortcuts operate on their owning DOS and retain editor focus', async t => {
+  const f = await fixture(['a.dos', 'b.dos', 'notes.ipynb']); t.after(f.close);
+  f.configuration.modules = { 'qa::math': '/server/qa/math.dos' };
+  await f.commands.get(ids.start).execute({});
+  const session = f.instances[0], sourcePath = session.sourcePath('qa::math');
+  await f.panel.options.open(session, sourcePath);
+  const source = f.opened[0], handler = f.handlers.at(-1);
+  assert(source.classes.has('ddb-debug-source-editor'));
+  assert(!source.classes.has('ddb-dos-editor'), 'read-only debug sources must not acquire ordinary DOS run commands');
+  f.activate(1); f.shell.activateById(source.id);
+  assert.equal(f.panel.session, session, 'returning to an existing source window selects its owning session');
+  for (const [keys, operation] of [['F9', null], ['F10', 'stepOver'], ['F11', 'stepInto'], ['Shift F11', 'stepOut'], ['F5', 'continueRun']]) {
+    session.state = 'paused'; session.changed.emit();
+    f.panel.options.select(f.instances[1]); // Sidebar choices cannot retarget editor shortcuts.
+    const binding = f.keyBindings.find(binding => binding.keys.join(' ') === keys && binding.selector === '.ddb-debug-source-editor .cm-content');
+    assert(binding.selector.includes('.ddb-debug-source-editor .cm-content'), keys);
+    const command = f.commands.get(binding.command);
+    assert.equal(command.isEnabled(binding.args), true, keys);
+    await command.execute(binding.args);
+    if (operation) { assert.equal(f.calls.at(-1).func, operation); assert.equal(f.calls.at(-1).path, 'a.dos'); }
+    else { assert.equal(handler.toggles, 1); assert.equal(handler.path(), sourcePath); assert.equal(f.handlers[0].toggles, 0); }
+    assert.equal(f.shell.currentWidget, source, keys + ' must keep the source editor active');
+  }
+  const restart = f.keyBindings.find(binding => binding.keys.join(' ') === 'Ctrl Shift F5' && binding.selector === '.ddb-debug-source-editor .cm-content');
+  f.panel.options.select(f.instances[1]);
+  await f.commands.get(restart.command).execute(restart.args);
+  assert.equal(f.starts.at(-1).path, 'a.dos'); assert.equal(source.isDisposed, true);
+  await f.panel.options.open(session, sourcePath);
+  const stop = f.keyBindings.find(binding => binding.keys.join(' ') === 'Shift F5' && binding.selector === '.ddb-debug-source-editor .cm-content');
+  await f.commands.get(stop.command).execute(stop.args); assert.equal(session.active, false);
+  f.activate(2);
+  for (const binding of f.keyBindings) { assert.equal(f.commands.get(binding.command).isEnabled(binding.args), false); }
 });

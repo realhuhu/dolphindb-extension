@@ -1,6 +1,6 @@
 [project]
 name = "dolphindb-extension"
-version = "0.1.0a7"
+version = "0.1.0b1"
 description = "Visual DolphinDB connection management for JupyterLab and Jupyter Notebook."
 readme = "README.md"
 authors = [
@@ -11,7 +11,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 keywords = ["dolphindb", "ddb", "jupyter", "jupyterlab", "notebook"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Framework :: Jupyter",
     "Framework :: Jupyter :: JupyterLab",
     "Framework :: Jupyter :: JupyterLab :: 4",
@@ -32,6 +32,7 @@ dependencies = [
 Homepage = "https://github.com/realhuhu/dolphindb-extension"
 Repository = "https://github.com/realhuhu/dolphindb-extension"
 Issues = "https://github.com/realhuhu/dolphindb-extension/issues"
+Documentation = "https://github.com/realhuhu/dolphindb-extension/blob/main/docs/README.md"
 Changelog = "https://github.com/realhuhu/dolphindb-extension/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
@@ -53,7 +54,7 @@ packages = ["src/dolphindb_extension"]
 "jupyter-config/jupyter_server_config.d" = "etc/jupyter/jupyter_server_config.d"
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "frontend", "schema", "style", "scripts", "tests", "jupyter-config", "package.json", "package-lock.json", "tsconfig.json", "install.json", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "uv.lock", ".python-version"]
+include = ["src", "frontend", "schema", "style", "scripts", "tests", "docs", "jupyter-config", "package.json", "package-lock.json", "tsconfig.json", "install.json", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "uv.lock", ".python-version"]
 artifacts = ["src/dolphindb_extension/labextension"]
 
 [tool.hatch.build.hooks.jupyter-builder]

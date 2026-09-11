@@ -14,6 +14,7 @@
     "Browser-safe LSP data types replace Node transport",
     "Replace global services with request-local injected hosts",
     "Route module reads through Jupyter Contents",
-    "Expose callbacks as callable methods; keep completion, symbol, SQL and documentation algorithms"
+    "Expose callbacks as callable methods; keep completion, symbol, SQL and documentation algorithms",
+    "Resolve variable completion shadowing per name so reassignment retains unrelated symbols"
   ]
 }

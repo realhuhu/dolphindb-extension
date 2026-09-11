@@ -67,6 +67,47 @@ def test_series_child_labels_keep_index_but_navigation_uses_position():
     assert value_page(values, query(path=[1, 0]))["text"] == "3"
 
 
+@pytest.mark.parametrize("index", [
+    pd.RangeIndex(15),
+    pd.Index([2, 10, 1, 2]),
+    pd.Index([9007199254740993, 9007199254740992, 9007199254740994]),
+    pd.Index([Decimal("10.01"), Decimal("2.001"), Decimal("-1.01")]),
+    pd.MultiIndex.from_tuples([("A", 10), ("A", 2), ("B", 1), ("A", 1)]),
+])
+def test_python_index_sorting_uses_native_values_and_preserves_display_labels(index):
+    frame = pd.DataFrame({"value": range(len(index))}, index=index)
+    original = frame.copy(deep=True)
+    for source in (frame, frame["value"]):
+        for offset in (0, 1):
+            grid = value_page(source, query(offset=offset))["grid"]
+            labels = list(index[offset:])
+            assert [row[0] for row in grid["rows"]] == list(map(str, labels))
+            order = sorted(range(len(labels)), key=grid["sortRanks"][0].__getitem__)
+            assert [labels[i] for i in order] == sorted(labels)
+    pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize("series", [False, True], ids=["dataframe", "series"])
+@pytest.mark.parametrize("index, ascending", [
+    (pd.Index([9007199254740993, None, 9007199254740992], dtype=object), [2, 0, 1]),
+    (pd.Index([9007199254740993, np.nan, 9007199254740992], dtype=object), [2, 0, 1]),
+    (pd.Index([9007199254740993, 9007199254740992.0], dtype=object), [1, 0]),
+    (pd.Index([9007199254740993, pd.NA, 9007199254740992], dtype="Int64"), [2, 0, 1]),
+    (pd.Index([2**64 - 1, pd.NA, 2**64 - 2], dtype="UInt64"), [2, 0, 1]),
+], ids=["none", "nan", "mixed-float", "nullable-int64", "nullable-uint64"])
+def test_index_sorting_retains_large_integers_with_missing_or_mixed_values(index, ascending, series):
+    frame = pd.DataFrame({"value": range(len(index))}, index=index)
+    original = frame.copy(deep=True)
+    source = frame["value"] if series else frame
+    for offset, limit in [(0, len(index)), (1, len(index) - 1), (0, 1), (len(index), 2)]:
+        grid = value_page(source, query(offset=offset, limit=limit))["grid"]
+        assert [row[0] for row in grid["rows"]] == list(map(str, index[offset:offset + limit]))
+        order = sorted(range(len(grid["rows"])), key=grid["sortRanks"][0].__getitem__)
+        expected = [str(index[i]) for i in ascending if offset <= i < offset + limit]
+        assert [grid["rows"][i][0] for i in order] == expected
+    pd.testing.assert_frame_equal(frame, original)
+
+
 @pytest.mark.skipif(not os.environ.get("DDB_TEST_HOST"), reason="Set DDB_TEST_HOST/USER/PASSWORD to run the live SDK regression")
 def test_live_table_browser_uses_sql_for_dfs_pages_and_column_cells():
     import dolphindb as ddb

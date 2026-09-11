@@ -55,6 +55,23 @@ def generate():
     completions = sources["completions"][sources["completions"].index("function getLineContent"):]
     completions = completions.replace("export class", "class").replace("export function", "function")
     completions = completions[:completions.index("export const completionsService")]
+    # Resolve shadowing per name. The upstream duplicate check puts every symbol
+    # into one group if any name is repeated, dropping unrelated completions.
+    first = completions.index("        const notDuplicateSymbols")
+    last = completions.index("        // 生成补全项", first)
+    completions = completions[:first] + """        const nearestByName = new Map<string, ISymbol>()
+        for (const symbol of symbolsInScope) {
+            const previous = nearestByName.get(symbol.name)
+            const start = symbol.metadata!.scope[0]
+            const previousStart = previous?.metadata!.scope[0]
+            if (!previousStart || start.line > previousStart.line ||
+                start.line === previousStart.line && start.character >= previousStart.character)
+                nearestByName.set(symbol.name, symbol)
+        }
+        const symbolsToComplete = [...nearestByName.values()]
+
+""" + completions[last:]
+    completions = re.sub(r"\nfunction hasDuplicatesByKey \(arr, key\) \{.*?\n\}\n", "\n", completions, count=1, flags=re.S)
     outputs["completions.ts"] = HEADER + imports + (
         "import { createSqlCompletions } from './sql-completions';\n"
         "export type DdbCompletionItem = CompletionItem & { order?: number };\n"
@@ -80,7 +97,7 @@ def generate():
         "repository": "https://github.com/dolphindb/vscode-extension",
         "revision": subprocess.check_output(["git", "-C", str(UPSTREAM), "rev-parse", "HEAD"], text=True).strip(),
         "sources": {f"src/languageserver/{name}.ts": hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()},
-        "adaptations": ["Browser-safe LSP data types replace Node transport", "Replace global services with request-local injected hosts", "Route module reads through Jupyter Contents", "Expose callbacks as callable methods; keep completion, symbol, SQL and documentation algorithms"],
+        "adaptations": ["Browser-safe LSP data types replace Node transport", "Replace global services with request-local injected hosts", "Route module reads through Jupyter Contents", "Expose callbacks as callable methods; keep completion, symbol, SQL and documentation algorithms", "Resolve variable completion shadowing per name so reassignment retains unrelated symbols"],
     }, indent=2) + "\n"
     return outputs
 

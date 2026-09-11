@@ -158,6 +158,44 @@ test('notebook browser identifies the owning DDB session and snapshots survive l
   }
 });
 
+test('editing an unlocked notebook connection invalidates live browsers and pending data, including password-only edits', async () => {
+  for (const manual of [false, true]) {
+    const f = fixture(); await tick();
+    if (manual) { await f.model.select('other'); }
+    const identity = f.model.browserIdentity(), revision = f.model.languageRevision;
+    const pending = deferred();
+    f.model.metadata = () => pending.promise;
+    const response = f.model.browse({kind:'table',database:'dfs://demo',table:'prices'},
+      {path:[],offset:0,limit:100,columnOffset:0});
+    const rejected = assert.rejects(response, /变化/);
+    // Passwords are absent from the public profile; saving still replaces the snapshot.
+    f.connections.state = {...f.connections.state}; f.connections.changed.emit(); await tick();
+    pending.resolve({form:'TABLE',count:3}); await rejected;
+    assert.notEqual(f.model.browserIdentity(), identity);
+    assert.ok(f.model.languageRevision > revision);
+    assert.equal(f.requests.at(-1).body.connectionId, manual ? 'other' : undefined);
+    f.model.dispose();
+  }
+});
+
+test('a connection reconfigured by another view invalidates preview identity on prepare and acknowledgement', async () => {
+  const f = fixture(); await tick();
+  const comm = f.current.comms[0], identity = f.model.browserIdentity(), revision = f.model.languageRevision;
+  comm.emit({configuring:true});
+  assert.notEqual(f.model.browserIdentity(), identity);
+  assert.ok(f.model.languageRevision > revision);
+  const preparing = f.model.browserIdentity();
+  comm.emit({configuring:false});
+  assert.notEqual(f.model.browserIdentity(), preparing);
+  const locked = {profile:profile('default'),locked:true,sessionId:'fixed-session'};
+  comm.emit(locked);
+  const session = f.model.browserIdentity(), requests = f.requests.length;
+  f.connections.state = {...f.connections.state}; f.connections.changed.emit(); await tick();
+  assert.equal(f.model.browserIdentity(), session);
+  assert.equal(f.requests.length, requests);
+  f.model.dispose();
+});
+
 test('reopening during a pending selection completes the requested connection rather than the old one', async () => {
   const f = fixture({ current: kernel({ state: { profile: profile('default'), configuring: true, requestedId: 'other' } }) });
   await tick();

@@ -86,6 +86,86 @@ test('scope-aware parameters, local definitions, docs and snippets come from ups
   assert.ok(hover.contents.value.includes('Adds one'));
 });
 
+test('reassignment only shadows the same name and retains unrelated variables and parameters', async () => {
+  const f = fixture(); f.binding.metadata = async () => ({});
+  const text = 'alpha = 1\nbeta = 2\nbeta = 3\nal';
+  const items = (await f.complete(text)).items;
+  assert.ok(items.some(item => item.label === 'alpha'));
+  assert.equal(items.filter(item => item.label === 'beta').length, 1);
+  const local = 'value = 1\ndef example(value, other) {\n  alpha = value\n  beta = 2\n  beta = 3\n  al\n}';
+  const inside = (await f.complete(local, local.indexOf('  al\n') + 4)).items;
+  for (const name of ['value', 'other', 'alpha', 'beta']) { assert.equal(inside.filter(item => item.label === name).length, 1, name); }
+  assert.equal(inside.find(item => item.label === 'value').detail, 'Parameter of example');
+  const outside = (await f.complete(local + '\nva')).items;
+  assert.equal(outside.find(item => item.label === 'value').detail, undefined);
+  assert.ok(!outside.some(item => ['alpha', 'beta', 'other'].includes(item.label)));
+});
+
+for (const closed of [0, 1]) {
+  test(`shared notebook editors retain per-view completion and navigation after closing view ${closed + 1}`, async () => {
+    const cmView = require('@codemirror/view'), autocomplete = require('@codemirror/autocomplete');
+    const { EditorState } = require('@codemirror/state');
+    const settings = require('./preferences.cjs').preferences();
+    const completions = [], opened = [], native = [], started = [];
+    let ViewLifecycle, source, keys;
+    const engine = { modules: { open: new Map() },
+      complete: async binding => { completions.push(binding.identity()); return { from: 6, to: 11, items: [{ label: 'alpha' }] }; },
+      definitions: async () => [{ uri: 'shared.ipynb', range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } } }],
+    };
+    const mocks = {
+      '@jupyterlab/rendermime': {},
+      '@codemirror/view': { ...cmView,
+        ViewPlugin: { fromClass: (type, spec) => { ViewLifecycle = type; return cmView.ViewPlugin.fromClass(type, spec); } },
+        keymap: { of: bindings => { keys = bindings; return cmView.keymap.of(bindings); } },
+      },
+      '@codemirror/autocomplete': { ...autocomplete,
+        autocompletion: options => { source = options.override[0]; return autocomplete.autocompletion(options); },
+        startCompletion: view => { started.push(view); return true; },
+      },
+    };
+    const path = resolve(__dirname, '../../frontend/language/editor.ts'), exports = {};
+    vm.runInNewContext(ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText,
+      { exports, queueMicrotask, setTimeout, clearTimeout, require: id => mocks[id] ?? (id.startsWith('.') ? load(resolve(dirname(path), id)) : require(id)) });
+    const { support } = await highlighter();
+    const service = new exports.LanguageEditors(engine, settings, {}, support), model = { mimeType: 'text/x-dolphindb' };
+    service.extension(model);
+    const makeView = () => ({ dom: {}, hasFocus: false, state: EditorState.create({ doc: '%%ddb\nalpha', selection: { anchor: 11 } }), updates: 0, dispatch() { this.updates++; } });
+    const views = [makeView(), makeView()], hosts = views.map(view => ({ contains: node => view.dom === node }));
+    const lifecycles = views.map(view => new ViewLifecycle(view));
+    const unbind = views.map((_view, index) => service.bind(model, {
+      path: () => 'shared.ipynb', source: () => views[index].state.doc.toString(), project: (text, offset) => projection(text, offset),
+      identity: () => index, nativeComplete: () => { native.push(index); return true; }, open: async () => { opened.push(index); },
+    }, () => hosts[index]));
+    await new Promise(resolve => queueMicrotask(resolve));
+    assert(views.every(view => view.updates > 0), 'binding changes must refresh every registered editor');
+    const complete = view => source({ view, state: view.state, pos: view.state.doc.length, explicit: true, aborted: false });
+    for (const view of views) { assert.equal((await complete(view)).options[0].label, 'alpha'); await service.jump(view, model); }
+    assert.deepEqual(completions, [0, 1]); assert.deepEqual(opened, [0, 1]);
+    views[closed].hasFocus = true;
+    assert.equal(service.complete(model), true); assert.equal(started.at(-1), views[closed]);
+    unbind[closed](); lifecycles[closed].destroy();
+    const surviving = 1 - closed, view = views[surviving]; view.hasFocus = true;
+    assert.equal((await complete(view)).options[0].label, 'alpha'); await service.jump(view, model);
+    assert.equal(completions.at(-1), surviving); assert.equal(opened.at(-1), surviving);
+    assert.equal(service.complete(model), true); assert.equal(started.at(-1), view, 'destroying one editor must retain the other view registration');
+    view.state = EditorState.create({ doc: 'print' });
+    assert.equal(keys.find(binding => binding.key === 'Ctrl-Space').run(view), true);
+    assert.deepEqual(native, [surviving]);
+    // Windowing can recreate the editor while the cell binding stays alive.
+    lifecycles[surviving].destroy();
+    hosts[surviving] = undefined;
+    const replacement = makeView();
+    replacement.state = EditorState.create({ doc: '%ddb 1 + alpha', selection: { anchor: 14 } });
+    const replacementLifecycle = new ViewLifecycle(replacement);
+    assert(replacementLifecycle.decorations.size > 0, 'inline magic highlighting must work before the windowed editor is assigned to its cell');
+    hosts[surviving] = { contains: node => replacement.dom === node };
+    assert.equal((await complete(replacement)).options[0].label, 'alpha');
+    await service.jump(replacement, model); assert.equal(opened.at(-1), surviving);
+    unbind[surviving](); replacementLifecycle.destroy();
+    assert.equal(service.complete(model), false);
+  });
+}
+
 test('module completion imports, qualified calls, definitions, and diagnostics are retained', async () => {
   const f = fixture({ 'analytics.dos': 'module analytics\n// @Brief: module function\ndef moduleFunction(input) {\n return input\n}\n' });
   const completion = (await f.complete('moduleF')).items.find(item => item.label === 'moduleFunction');
