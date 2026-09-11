@@ -1,6 +1,6 @@
 {
   "name": "dolphindb-extension",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Visual DolphinDB connection management for Jupyter",
   "license": "Apache-2.0",
   "private": true,
@@ -24,7 +24,7 @@
     "build": "tsc && jupyter-builder build .",
     "build:prod": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs tests/frontend/notebook.test.cjs tests/frontend/language.test.cjs tests/frontend/workspace.test.cjs tests/frontend/output.test.cjs tests/frontend/sessions.test.cjs"
+    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs tests/frontend/notebook.test.cjs tests/frontend/language.test.cjs tests/frontend/workspace.test.cjs tests/frontend/output.test.cjs tests/frontend/sessions.test.cjs tests/frontend/data.test.cjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.0",
@@ -53,13 +53,16 @@
     "@jupyterlab/settingregistry": "^4.2.0",
     "@jupyterlab/ui-components": "^4.2.0",
     "@lezer/highlight": "^1.2.0",
+    "@lumino/commands": "2.3.4",
     "@lumino/coreutils": "^2.2.3",
     "@lumino/disposable": "^2.1.6",
     "@lumino/messaging": "^2.0.0",
     "@lumino/signaling": "^2.1.6",
     "@lumino/widgets": "^2.3.0",
     "dolphindb": "3.1.41",
+    "echarts": "6.0.0",
     "lucide": "1.44.0",
+    "plotly.js-gl3d-dist-min": "3.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vscode-languageserver-textdocument": "^1.0.12",

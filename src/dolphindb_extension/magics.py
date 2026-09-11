@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import atexit
+import json
 import keyword
 import os
 import shlex
@@ -21,6 +23,28 @@ from .connections import ConnectionError, Credentials, ProfileStore, validate_pr
 COMM_TARGET = "dolphindb-extension:notebook"
 RUNNING_COMM_TARGET = "dolphindb-extension:running-session"
 SHELL_ATTRIBUTE = "_dolphindb_extension_magics"
+
+
+class DdbDisplayTransformer(ast.NodeTransformer):
+    """Render only a cell's final expression when it directly calls a DDB magic."""
+
+    def visit_Module(self, module):
+        if not module.body or not isinstance(module.body[-1], ast.Expr):
+            return module
+        node = module.body[-1]
+        call = node.value
+        if not isinstance(call, ast.Call) or not call.args or not isinstance(call.args[0], ast.Constant) or call.args[0].value != "ddb":
+            return module
+        function = call.func
+        if not isinstance(function, ast.Attribute) or function.attr not in ("run_line_magic", "run_cell_magic"):
+            return module
+        shell = function.value
+        if not isinstance(shell, ast.Call) or not isinstance(shell.func, ast.Name) or shell.func.id != "get_ipython" or shell.args or shell.keywords:
+            return module
+        renderer = ast.Attribute(value=ast.Attribute(value=shell, attr=SHELL_ATTRIBUTE, ctx=ast.Load()),
+                                 attr="show_result", ctx=ast.Load())
+        module.body[-1] = ast.copy_location(ast.Expr(value=ast.Call(func=renderer, args=[call], keywords=[])), node)
+        return module
 
 
 def _output_name(value):
@@ -85,6 +109,12 @@ def open_session(profile: dict):
 class DolphinDBMagics(Magics):
     def __init__(self, shell):
         super().__init__(shell)
+        from .browser import ResultBrowser
+        self.browser = ResultBrowser()
+        self.show_function = self.show
+        self.display_transformer = DdbDisplayTransformer()
+        self.browse_cache = {}
+        self.session_id = ""
         self.profile: dict | None = None
         self.session = None
         self.preview_session = None
@@ -100,6 +130,8 @@ class DolphinDBMagics(Magics):
     def state(self, error: str | None = None) -> dict:
         return {
             "kind": "state",
+            "browserOwner": self.browser.owner,
+            "sessionId": self.session_id,
             "profile": {k: v for k, v in self.profile.items() if k != "password"} if self.profile else None,
             "locked": self.session is not None,
             "busy": self.busy,
@@ -183,6 +215,8 @@ class DolphinDBMagics(Magics):
             try:
                 if not isinstance(data, dict):
                     raise UsageError("DolphinDB 配置消息无效。")
+                if "settings" in data:
+                    self.browser.configure(data["settings"])
                 if data.get("kind") == "metadata":
                     request_id = data.get("id")
                     try:
@@ -209,11 +243,18 @@ class DolphinDBMagics(Magics):
                     self.close()
                 else:
                     self.publish()
-            except (UsageError, ConnectionError) as error:
+            except (UsageError, ConnectionError, ValueError) as error:
                 self.publish(str(error))
 
         comm.on_msg(receive)
         # Opening another page observes the existing kernel session; it never resets it.
+        data = message.get("content", {}).get("data", {})
+        if isinstance(data, dict) and "settings" in data:
+            try:
+                self.browser.configure(data["settings"])
+            except ValueError as error:
+                self.publish(str(error))
+                return
         self.publish()
 
     def execute(self, code: str):
@@ -235,8 +276,11 @@ class DolphinDBMagics(Magics):
                         except ConnectionError as error:
                             raise UsageError(str(error)) from None
                     self.session = open_session(self.profile)
+                    from uuid import uuid4
+                    self.session_id = uuid4().hex
                     self.publish()
                 # Return the object itself: IPython's assignment syntax captures this value.
+                self.browse_cache.clear()
                 return self.session.run(code)
             finally:
                 self.busy = False
@@ -275,6 +319,30 @@ class DolphinDBMagics(Magics):
         except (ValueError, ConnectionError) as error:
             raise UsageError(str(error)) from None
 
+    def show(self, value) -> None:
+        """Render only the supplied Python object, without running any DDB code."""
+        from IPython.display import display
+
+        from .browser import SHOW_MIME
+
+        with self.lock:
+            ticket = self.browser.ticket(value)
+        fallback, _ = self.shell.display_formatter.format(value, include=["text/plain"])
+        display({**fallback, SHOW_MIME: ticket}, raw=True)
+
+    def show_result(self, value) -> None:
+        """Automatic magic output skips None, like IPython's ordinary display hook."""
+        if value is not None:
+            self.show(value)
+
+    @line_magic
+    @no_var_expand
+    def ddb_show(self, line: str):
+        """Explicitly display a Python expression with DDB components: %ddb_show result."""
+        if not line.strip():
+            raise UsageError("用法：%ddb_show Python对象或表达式，例如 %ddb_show aaa")
+        self.show(eval(line, self.shell.user_global_ns, self.shell.user_ns))
+
     @line_magic
     def ddb_close(self, line: str):
         """Close this kernel's DDB session so another connection can be selected."""
@@ -284,6 +352,8 @@ class DolphinDBMagics(Magics):
 
     def close(self) -> None:
         with self.lock:
+            self.browse_cache.clear()
+            self.session_id = ""
             self.close_preview()
             if self.session is not None:
                 self.session.close()
@@ -291,6 +361,7 @@ class DolphinDBMagics(Magics):
             self.publish()
 
     def close_preview(self) -> None:
+        self.browse_cache.clear()
         if self.preview_session is not None:
             with suppress(Exception):
                 self.preview_session.close()
@@ -300,6 +371,14 @@ class DolphinDBMagics(Magics):
         from .metadata import inspect_session
 
         with self.lock:
+            if operation == "browse" and isinstance(arguments, dict):
+                from .browser import session_page
+                target = json.loads(arguments.get("target", "null"))
+                query = json.loads(arguments.get("request", "null"))
+                if isinstance(target, dict) and target.get("kind") == "result":
+                    return self.browser.read(target, query)
+            else:
+                target = query = None
             if self.busy or self.configuring or self.configuration_error or not self.profile:
                 raise UsageError("DDB 连接尚未就绪。")
             if not isinstance(arguments, dict):
@@ -310,7 +389,9 @@ class DolphinDBMagics(Magics):
                 if self.preview_session is None:
                     self.preview_session = open_session(self.profile)
                 session = self.preview_session
-            return inspect_session(session, operation, arguments)
+            if operation == "browse":
+                return session_page(session, target, query, self.browse_cache)
+            return inspect_session(session, operation, arguments, self.browser.settings)
 
 
 def load_ipython_extension(shell) -> None:
@@ -321,6 +402,9 @@ def load_ipython_extension(shell) -> None:
         for name in functions:
             magics.previous[kind, name] = shell.magics_manager.magics[kind].get(name)
     shell.register_magics(magics)
+    shell.ast_transformers.append(magics.display_transformer)
+    # A user-defined name always wins; the magic and explicit import remain available.
+    shell.user_ns.setdefault("ddb_show", magics.show_function)
     setattr(shell, SHELL_ATTRIBUTE, magics)
     kernel = getattr(shell, "kernel", None)
     if kernel is not None:
@@ -341,6 +425,11 @@ def unload_ipython_extension(shell) -> None:
     if magics is None:
         return
     magics.close()
+    magics.browser.dispose()
+    if magics.display_transformer in shell.ast_transformers:
+        shell.ast_transformers.remove(magics.display_transformer)
+    if shell.user_ns.get("ddb_show") is magics.show_function:
+        shell.user_ns.pop("ddb_show")
     for comm in tuple(magics.comms):
         with suppress(Exception):
             comm.close()

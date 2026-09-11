@@ -28,6 +28,7 @@ import { captureVariableInsertion } from '../session/interactions';
 import { showTablePreview } from '../session/preview';
 import { NotebookSessions } from '../notebook/sessions';
 import { dosIcon as DOS_ICON, notebookIcon } from '../icons';
+import { DATA_MIME } from '../data/types';
 
 const prefix = 'dolphindb-extension:';
 type EditorWidget = IDocumentWidget<FileEditor>;
@@ -39,7 +40,10 @@ export default {
   activate: (app: JupyterFrontEnd, connections: ConnectionModel, editors: IEditorTracker, documents: IDocumentManager, languages: IEditorLanguageRegistry, languageEditors: LanguageEditors, workspace: SessionWorkspace, rendermime: IRenderMimeRegistry,
     palette: ICommandPalette | null, running: IRunningSessionManagers | null, launcher: ILauncher | null, browsers: IFileBrowserFactory | null, labShell: ILabShell | null) => {
     const manager = new DosManager(connections);
+    // Rich DOS output must not change the renderer selected for Notebook cells.
+    rendermime = rendermime.clone();
     registerDdbRenderer(rendermime);
+    rendermime.addFactory({ safe: true, mimeTypes: [DATA_MIME], createRenderer: () => workspace.browser.renderer() }, -10);
     if (!languages.findByMIME(DOS_MIME)) {
       languages.addLanguage({ name: 'DolphinDB', mime: DOS_MIME, extensions: ['dos'], load: async () => languageSupport() });
     }
@@ -77,9 +81,10 @@ export default {
       if (!paths.length) { await showDialog({ title: '批量运行 DOS', body: '先打开 DOS 文件，或在文件浏览器中选中多个 DOS 文件。' }); return; }
       await manager.ready;
       await manager.refresh();
+      const stopOnError = connections.preferences.value.execution.stopOnError;
       const choices = paths.map((path, index) => ({ path, label: `${index + 1}. ${path} · ${manager.profileFor(path)?.name ?? '未选择连接'}` }));
       const result = await InputDialog.getMultipleItems({ title: '批量运行 DOS',
-        label: '按列表顺序执行，各文件使用自己的会话；遇到错误停止。Ctrl / Shift 可多选。',
+        label: `按列表顺序执行，各文件使用自己的会话；${stopOnError ? '遇到错误停止' : '遇到错误继续后续文件'}。Ctrl / Shift 可多选。`,
         items: choices.map(item => item.label), defaults: choices.map(item => item.label), okLabel: '运行所选文件', cancelLabel: '取消' });
       if (!result.button.accept || !result.value?.length) { return; }
       batchRunning = true; stopBatch = false;
@@ -93,8 +98,9 @@ export default {
         for (const job of jobs) {
           if (stopBatch) { break; }
           app.shell.activateById(job.widget.id);
-          workspace.sync(true);
-          if (!await job.model.run(job.code)) { break; }
+          workspace.sync();
+          const success = await job.model.run(job.code);
+          if (!success && stopOnError) { break; }
         }
       } finally { batchRunning = false; }
     };
@@ -166,8 +172,8 @@ export default {
         context.pathChanged.connect(renamed);
         void context.ready.then(() => {
           if (widget.isDisposed || app.shell.currentWidget !== widget) { return; }
-          if (app.shell.node.clientWidth < 1100) { labShell?.collapseLeft(); }
-          workspace.sync(true);
+          if (connections.preferences.value.sidebar.collapseLeftOnNarrow && app.shell.node.clientWidth < 1100) { labShell?.collapseLeft(); }
+          workspace.sync();
         });
         return new DisposableDelegate(() => {
           unbindLanguage();

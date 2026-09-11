@@ -1,7 +1,7 @@
 import { autocompletion, completionKeymap, acceptCompletion, startCompletion, snippet, insertCompletionText, pickedCompletion, nextSnippetField, prevSnippetField, hasNextSnippetField, hasPrevSnippetField, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import { StateEffect, StateField, Prec, type Extension } from '@codemirror/state';
-import { EditorView, ViewPlugin, Decoration, hoverTooltip, keymap, showTooltip, type DecorationSet, type Tooltip } from '@codemirror/view';
-import { linter } from '@codemirror/lint';
+import { EditorView, ViewPlugin, Decoration, hoverTooltip, closeHoverTooltips, keymap, showTooltip, type DecorationSet, type Tooltip } from '@codemirror/view';
+import { linter, forceLinting } from '@codemirror/lint';
 import { highlightTree } from '@lezer/highlight';
 import type { LanguageSupport } from '@codemirror/language';
 import type { CodeEditor } from '@jupyterlab/codeeditor';
@@ -176,6 +176,7 @@ export class LanguageEditors {
         { key: 'F12', run: view => { const current = owner.current(model, view.state.doc.toString(), view.state.selection.main.head); if (!current) { return false; } void owner.jump(view, model); return true; } },
       ])),
       hoverTooltip(async (view, position) => {
+        if (!owner.settings.value.language.hoverDocumentation) { return null; }
         const current = owner.current(model, view.state.doc.toString(), position);
         if (!current) { return null; }
         const line = view.state.doc.lineAt(position);
@@ -184,15 +185,18 @@ export class LanguageEditors {
         const [local, docs] = await Promise.all([owner.engine.hover(current.binding, current.projection), documentation(owner.settings.value.language.documentationLanguage)]);
         const content = local?.contents;
         const markdown = content && !Array.isArray(content) && typeof content !== 'string' && 'value' in content ? content.value : docs.get_function_markdown(word[0]);
-        return markdown ? { pos: line.from + word.index!, end: line.from + word.index! + word[0].length, above: true, create: () => owner.renderMarkdown(markdown) } : null;
+        return markdown && owner.settings.value.language.hoverDocumentation ? { pos: line.from + word.index!, end: line.from + word.index! + word[0].length, above: true, create: () => owner.renderMarkdown(markdown) } : null;
       }),
       linter(async view => {
+        if (!owner.settings.value.language.diagnostics) { return []; }
         const text = view.state.doc.toString();
         const region = ddbRegions(text, model.mimeType === 'text/x-dolphindb' && !/^%%ddb\b/.test(text))[0];
         const current = region && owner.current(model, text, region.from);
         if (!current) { return []; }
         const doc = TextDocument.create('', '', 0, current.projection.source);
-        return (await owner.engine.diagnostics(current.binding, current.projection)).map(diagnostic => ({
+        const diagnostics = await owner.engine.diagnostics(current.binding, current.projection);
+        if (!owner.settings.value.language.diagnostics) { return []; }
+        return diagnostics.map(diagnostic => ({
           from: doc.offsetAt(diagnostic.range.start) - current.projection.base,
           to: doc.offsetAt(diagnostic.range.end) - current.projection.base,
           severity: 'warning' as const, message: typeof diagnostic.message === 'string' ? diagnostic.message : diagnostic.message.value,
@@ -204,7 +208,15 @@ export class LanguageEditors {
         decorations: DecorationSet;
         timer: ReturnType<typeof setTimeout> | undefined;
         generation = 0;
-        constructor(readonly view: EditorView) { owner.views.set(model, view); this.decorations = decorations(view); }
+        constructor(readonly view: EditorView) {
+          owner.views.set(model, view); this.decorations = decorations(view);
+          owner.settings.changed.connect(this.settingsChanged, this);
+        }
+        private settingsChanged(): void {
+          clearTimeout(this.timer); this.generation++;
+          this.view.dispatch({ effects: [signatureEffect.of(null), closeHoverTooltips] });
+          forceLinting(this.view);
+        }
         update(update: import('@codemirror/view').ViewUpdate) {
           if (update.view.hasFocus) { owner.active = { model, view: update.view }; }
           if (update.docChanged || update.transactions.some(tr => tr.effects.some(effect => effect.is(bindingEffect)))) {
@@ -213,12 +225,13 @@ export class LanguageEditors {
           if (update.docChanged || update.selectionSet || update.focusChanged) {
             const generation = ++this.generation;
             clearTimeout(this.timer);
+            if (!owner.settings.value.language.signatureHelp) { return; }
             this.timer = setTimeout(() => { void signature(this.view).then(value => {
               if (generation === this.generation) { this.view.dispatch({ effects: signatureEffect.of(value) }); }
             }); }, 80);
           }
         }
-        destroy() { this.generation++; clearTimeout(this.timer); owner.views.delete(model); if (owner.active?.view === this.view) { owner.active = null; } }
+        destroy() { owner.settings.changed.disconnect(this.settingsChanged, this); this.generation++; clearTimeout(this.timer); owner.views.delete(model); if (owner.active?.view === this.view) { owner.active = null; } }
       }, { decorations: plugin => plugin.decorations })),
     ];
   }

@@ -4,6 +4,7 @@
 .ddb-sidebar > .jp-SidePanel-content { overflow: auto; }
 .ddb-panel { --ddb-accent: var(--jp-brand-color1); --ddb-tint: var(--jp-layout-color2); display: flex; flex-direction: column; font: var(--jp-ui-font-size1) var(--jp-ui-font-family); }
 .ddb-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--jp-border-color2); }
+.ddb-connection-toolbar { align-items: center; min-height: 24px; padding: 0; border: 0; box-shadow: none; z-index: auto; }
 .ddb-brand { display: flex; align-items: center; gap: 8px; }
 .ddb-brand-mark { width: 24px; height: 28px; color: var(--jp-ui-font-color2); }
 .ddb-brand-mark svg, .ddb-empty svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 1.7; }
@@ -22,7 +23,7 @@
 .ddb-list { padding: 0 12px 12px; }
 .ddb-connection { border: 1px solid var(--jp-border-color2); padding: 10px; margin-bottom: 8px; }
 .ddb-connection.is-selected { border-color: var(--ddb-accent); }
-.ddb-connection-title { display: flex; align-items: flex-start; gap: 8px; }
+.ddb-connection-title { display: flex; align-items: center; gap: 8px; }
 .ddb-connection h3 { font-size: 13px; font-weight: 600; margin: 0; overflow-wrap: anywhere; flex: 1; }
 .ddb-badge { font-size: 10px; color: var(--ddb-accent); padding: 2px 5px; background: var(--ddb-tint); white-space: nowrap; }
 .ddb-endpoint { display: block; font-family: var(--jp-code-font-family); color: var(--jp-ui-font-color2); font-size: 11px; margin-top: 8px; overflow-wrap: anywhere; }
@@ -49,7 +50,7 @@
 .ddb-search { margin: 0 12px 10px; }
 .ddb-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ddb-form-divider { height: 1px; background: var(--jp-border-color2); margin: 16px 0 2px; }
-.ddb-password-field { display: flex; gap: 4px; }
+.ddb-password-field { display: flex; align-items: center; gap: 4px; }
 .ddb-password-field > .jp-InputGroup { flex: 1; min-width: 0; }
 .ddb-clear-password { margin-top: 5px; }
 .ddb-checkbox { display: flex; margin: 14px 0 6px; }
@@ -67,7 +68,7 @@
 .ddb-connection-picker .jp-HTMLSelect { min-width: 0; }
 .ddb-connection-picker select { max-width: 195px; text-overflow: ellipsis; }
 .ddb-editor-split > .jp-FileEditorCodeWrapper { min-height: 90px; }
-.ddb-output-widget { box-sizing: border-box; overflow: auto; min-height: 110px; border-top: 1px solid var(--jp-border-color1); background: var(--jp-layout-color0); }
+.ddb-output-widget { box-sizing: border-box; overflow: auto; isolation: isolate; min-height: 110px; border-top: 1px solid var(--jp-border-color1); background: var(--jp-layout-color0); }
 .ddb-output-widget.ddb-mod-collapsed { min-height: 32px; max-height: 32px; overflow: hidden; }
 .ddb-output { color: var(--jp-ui-font-color1); font: var(--jp-ui-font-size1) var(--jp-ui-font-family); }
 .ddb-output-toolbar { box-sizing: border-box; display: flex; align-items: center; width: 100%; height: 32px; position: sticky; top: 0; z-index: 1; padding: 2px 8px; background: var(--jp-toolbar-background); border-bottom: 1px solid var(--jp-border-color2); }
@@ -87,8 +88,10 @@
 .ddb-output-entry .ddb-native-output { padding: 6px 24px; }
 .ddb-output-entry .jp-OutputArea-output { padding: 0; }
 .ddb-native-output .jp-OutputPrompt { display: none; }
-.ddb-result-grid { overflow: auto; max-height: 400px; }
+/* Native sticky table headers stack over their own rows, never other UI. */
+.ddb-result-grid { overflow: auto; max-height: 400px; isolation: isolate; }
 .ddb-result-grid .jp-sortable-table { min-width: 100%; white-space: nowrap; font-family: var(--jp-code-font-family); }
+.ddb-result-grid .jp-sortable-table-th-wrapper { align-items: center; }
 .ddb-result-grid td > span { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .ddb-result-grid small { display: block; padding: 6px 0; color: var(--jp-ui-font-color2); }
 /* The native dialog body owns both scroll axes, including when resized. */
@@ -101,7 +104,7 @@
 .ddb-dos-workspace > .jp-SidePanel-header { padding: 0; font-weight: normal; letter-spacing: normal; text-transform: none; }
 .ddb-dos-workspace > .jp-SidePanel-header > .jp-ReactWidget { width: 100%; }
 .ddb-document-workspace { font: var(--jp-ui-font-size1) var(--jp-ui-font-family); }
-.ddb-document-workspace > header { padding: 8px 12px; display: flex; gap: 8px; }
+.ddb-document-workspace > header { padding: 8px 12px; display: flex; align-items: center; gap: 8px; }
 .ddb-document-workspace > header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ddb-document-workspace > header span { margin-left: auto; flex-shrink: 0; color: var(--jp-ui-font-color2); font-size: 11px; }
 .ddb-session-meta { padding: 0 12px 8px; display: grid; gap: 3px; }
@@ -205,3 +208,30 @@
 .cm-content .ddb-token-function { color: var(--ddb-token-function); }
 .cm-content .ddb-token-variable { color: var(--ddb-token-variable); }
 .cm-content .ddb-token-invalid { color: var(--ddb-token-invalid); }
+
+.ddb-browser-widget { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.ddb-browser { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; isolation: isolate; color: var(--jp-ui-font-color1); background: var(--jp-layout-color1); font-size: var(--jp-ui-font-size1); }
+.ddb-browser-toolbar, .ddb-browser-pagination, .ddb-browser-breadcrumbs { display: flex; align-items: center; box-sizing: border-box; flex: 0 0 auto; min-height: 32px; padding: 4px 8px; border-bottom: 1px solid var(--jp-border-color2); box-shadow: none; z-index: auto; }
+/* React Toolbar lays out slotted controls inside its shadow positioning region. */
+.ddb-browser-toolbar::part(positioning-region), .ddb-browser-pagination::part(positioning-region), .ddb-browser-breadcrumbs::part(positioning-region) { gap: 6px; flex-wrap: wrap; }
+.ddb-browser-summary { margin-right: auto; font-family: var(--jp-code-font-family); }
+.ddb-browser-pagination label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ddb-browser-body { overflow: auto; flex: 1 1 auto; min-height: 0; padding: 8px; }
+.ddb-browser-body .ddb-result-grid { overflow: visible; max-height: none; }
+.ddb-browser-pagination { border-top: 1px solid var(--jp-border-color2); border-bottom: 0; }
+.ddb-browser-pagination input { box-sizing: border-box; width: 64px; height: 24px; }
+.ddb-browser-children { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding-top: 8px; }
+.ddb-browser-children .jp-ToolbarButtonComponent { max-width: 280px; }
+.ddb-browser-children .jp-ToolbarButtonComponent-label { overflow: hidden; text-overflow: ellipsis; }
+.ddb-browser-scalar { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--jp-code-font-family); }
+.ddb-browser-inline { min-height: 70px; max-height: 540px; }
+.ddb-browser-inline .ddb-browser-body { max-height: 430px; }
+.ddb-chart { width: 100%; min-width: 280px; height: 420px; }
+.ddb-chart-container { min-width: 0; }
+.ddb-browser:not(.ddb-browser-inline) > .ddb-browser-body:has(> .ddb-chart-container) { display: flex; flex-direction: column; }
+.ddb-browser:not(.ddb-browser-inline) > .ddb-browser-body > .ddb-chart-container { flex: 1; min-height: 320px; }
+.ddb-browser:not(.ddb-browser-inline) > .ddb-browser-body > .ddb-chart-container > .ddb-chart { height: 100%; }
+.ddb-tree-actions { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.ddb-actions-button { display: inline-flex; align-items: center; }
+.ddb-table-preview-action { display: inline-flex; align-items: center; }
+.ddb-tree-actions .jp-ToolbarButtonComponent, .ddb-table-preview-action .jp-ToolbarButtonComponent { margin: 0; }

@@ -1,4 +1,6 @@
 import { DdbForm, DdbObj, format, formati, type DDB, type DdbVectorObj, type DdbMatrixValue, type DdbDictValue } from 'dolphindb/browser.js';
+import type { DataTicket } from '../data/types';
+import { ddbTypeName } from '../data/names';
 import { request, socketUrl, type SessionTicket } from '../api';
 import { DdbConnection } from '../upstream/connection';
 import { executeCode, funcdefs } from '../upstream/execution';
@@ -11,7 +13,7 @@ export interface VariableEntry {
   name: string; type: string; form: string; rows: number; columns: number;
   bytes: bigint | string; shared: boolean; value?: string;
 }
-export interface DisplayValue { text?: string; columns?: string[]; rows?: string[][]; totalRows?: number; totalColumns?: number; sortRanks?: (number[] | null)[] }
+export interface DisplayValue { text?: string; columns?: string[]; rows?: string[][]; totalRows?: number; totalColumns?: number; sortRanks?: (number[] | null)[]; columnTypes?: string[]; browser?: DataTicket }
 
 export async function openSdk(ticket: SessionTicket, name: string, inspectServer = true): Promise<DdbConnection> {
   const connection = new DdbConnection(socketUrl(ticket.path), name, {
@@ -91,8 +93,8 @@ export async function loadVariables(ddb: DDB): Promise<VariableEntry[]> {
     immutables.forEach((v, i) => {
       const obj = values.value[i];
       v.value = (obj.form === DdbForm.pair
-        ? `[${formati(obj as DdbVectorObj, 0, { colors: false })}, ${formati(obj as DdbVectorObj, 1, { colors: false })}]`
-        : format(obj.type, obj.value, obj.le, { colors: false })).slice(0, 300);
+        ? `[${formati(obj as DdbVectorObj, 0, { colors: false, grouping: false })}, ${formati(obj as DdbVectorObj, 1, { colors: false, grouping: false })}]`
+        : format(obj.type, obj.value, obj.le, { colors: false, grouping: false })).slice(0, 300);
     });
   }
   return variables;
@@ -103,17 +105,20 @@ export function displayValue(obj: DdbObj, maxRows = 100): DisplayValue {
     const columns = obj.value as DdbVectorObj[];
     const rows: string[][] = [];
     for (let row = 0; row < Math.min(obj.rows ?? 0, maxRows); row++) {
-      rows.push(columns.map(column => formati(column, row, { quote: false, nullstr: true }).slice(0, 2000)));
+      rows.push(columns.map(column => formati(column, row, { quote: false, grouping: false, nullstr: true }).slice(0, 2000)));
     }
-    return { columns: columns.map(c => c.name ?? ''), rows, totalRows: obj.rows,
+    return { columns: columns.map(c => c.name ?? ''), columnTypes: columns.map(c => ddbTypeName(c.type)), rows, totalRows: obj.rows,
       sortRanks: columns.map(column => columnSortRanks(column, rows.length)) };
   }
   return { text: obj.toString().slice(0, 20_000) };
 }
 
-export async function tablePreview(connection: DdbConnection, database: string, table: string): Promise<DisplayValue> {
+export async function tablePreview(connection: DdbConnection, database: string, table: string, rows = 100): Promise<DisplayValue> {
+  if (!Number.isInteger(rows) || rows < 1 || rows > 1000) { throw new Error('表预览行数无效。'); }
   const ddb = connection.ddb;
-  return displayValue(await ddb.call(await ddb.define(funcdefs.peek_table.dolphindb), [database, table]));
+  // TOP requires an integer literal, and SDK definitions are cached by name.
+  // Validate the limit and quote names instead of caching a fixed-limit helper.
+  return displayValue(await ddb.eval(`select top ${rows} * from loadTable(${JSON.stringify(database)}, ${JSON.stringify(table)})`), rows);
 }
 
 export async function tableSchema(connection: DdbConnection, database: string, table: string): Promise<DisplayValue> {
@@ -126,20 +131,20 @@ export function variableDisplayValue(obj: DdbObj): DisplayValue {
   const cell = (vector: DdbVectorObj, index: number) => formati(vector, index, { colors: false, grouping: false, nullstr: true, quote: false }).slice(0, 2000);
   if (obj.form === DdbForm.table) {
     const columns = (obj.value as DdbVectorObj[]).slice(0, 8);
-    return { columns: columns.map(column => column.name ?? ''),
+    return { columns: columns.map(column => column.name ?? ''), columnTypes: columns.map(column => ddbTypeName(column.type)),
       rows: Array.from({ length: count }, (_, row) => columns.map(column => cell(column, row))),
       totalRows: obj.rows, totalColumns: (obj.value as DdbVectorObj[]).length,
       sortRanks: columns.map(column => columnSortRanks(column, count)) };
   }
   if (obj.form === DdbForm.vector || obj.form === DdbForm.pair || obj.form === DdbForm.set) {
     const vector = obj as DdbVectorObj;
-    return { columns: ['索引', '值'], rows: Array.from({ length: count }, (_, row) => [String(row), cell(vector, row)]),
+    return { columns: ['索引', '值'], columnTypes: ['INT', ddbTypeName(vector.type)], rows: Array.from({ length: count }, (_, row) => [String(row), cell(vector, row)]),
       totalRows: obj.rows, sortRanks: [Array.from({ length: count }, (_, row) => row), columnSortRanks(vector, count)] };
   }
   if (obj.form === DdbForm.dict) {
     const [keys, values] = obj.value as DdbDictValue;
     const size = Math.min(keys.rows ?? 0, 10);
-    return { columns: ['键', '值'], rows: Array.from({ length: size }, (_, row) => [cell(keys, row), cell(values, row)]),
+    return { columns: ['键', '值'], columnTypes: [ddbTypeName(keys.type), ddbTypeName(values.type)], rows: Array.from({ length: size }, (_, row) => [cell(keys, row), cell(values, row)]),
       totalRows: keys.rows, sortRanks: [columnSortRanks(keys, size), columnSortRanks(values, size)] };
   }
   if (obj.form === DdbForm.matrix) {
@@ -148,7 +153,7 @@ export function variableDisplayValue(obj: DdbObj): DisplayValue {
     const flat = new DdbObj<DdbMatrixValue['data']>({ form: DdbForm.vector, type: obj.type, value: matrix.data, rows: obj.rows! * obj.cols!, le: obj.le });
     const columns = Array.from({ length: Math.min(obj.cols!, 8) }, (_, col) => col);
     const ranks = columnSortRanks(flat, flat.rows!);
-    return { columns: ['索引', ...columns.map(col => matrix.cols ? cell(matrix.cols, col) : String(col))],
+    return { columns: ['索引', ...columns.map(col => matrix.cols ? cell(matrix.cols, col) : String(col))], columnTypes: ['INT', ...columns.map(() => ddbTypeName(obj.type))],
       rows: Array.from({ length: count }, (_, row) => [matrix.rows ? cell(matrix.rows, row) : String(row),
         ...columns.map(col => cell(flat, col * obj.rows! + row))]),
       totalRows: obj.rows, totalColumns: obj.cols! + 1,
@@ -161,8 +166,8 @@ export function variableDisplayValue(obj: DdbObj): DisplayValue {
 }
 
 /** Same owning-session and size guard as VS Code's DdbVar.resolve_tooltip. */
-export async function variablePreview(ddb: DDB, name: string): Promise<DisplayValue> {
-  return variableDisplayValue(await ddb.eval(variablePreviewScript(name)));
+export async function variablePreview(ddb: DDB, name: string, limit = 10240): Promise<DisplayValue> {
+  return variableDisplayValue(await ddb.eval(variablePreviewScript(name, limit)));
 }
 
 export async function tableColumns(ddb: DDB, table: string): Promise<string[]> {

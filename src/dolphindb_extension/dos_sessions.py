@@ -18,9 +18,17 @@ from uuid import uuid4
 from tornado.websocket import WebSocketClosedError, websocket_connect
 
 from .connections import ConnectionError
+from .preferences import history_options
 
 DOS_RESOURCE = "dolphindb-extension:dos-sessions"
 MAX_HISTORY_BYTES = 8 * 1024 * 1024
+
+
+def validated_history_options(value):
+    try:
+        return history_options(value)
+    except ValueError:
+        raise ConnectionError("DOS 历史设置无效。") from None
 
 
 def timestamp():
@@ -59,6 +67,21 @@ class DosSession:
         self.history: list[dict[str, Any]] = []
         self.sequence = 0
         self.current_run = None
+        self.history_entries = 20
+        self.history_bytes = MAX_HISTORY_BYTES
+
+    def configure_history(self, entries, budget):
+        self.history_entries, self.history_bytes = entries, budget
+        self.trim_history()
+
+    def trim_history(self):
+        self.history = self.history[-self.history_entries:]
+        retained = sum(len(frame) for run in self.history for frame in run["frames"])
+        while len(self.history) > 1 and retained > self.history_bytes:
+            retained -= sum(map(len, self.history.pop(0)["frames"]))
+        if self.history and retained > self.history_bytes:
+            self.history[-1]["frames"] = []
+            self.history[-1]["truncated"] = True
 
     def summary(self):
         return {
@@ -134,7 +157,7 @@ class DosSession:
                 "truncated": False,
             }
             self.history.append(self.current_run)
-            self.history = self.history[-20:]
+            self.trim_history()
         self.ready.clear()
         try:
             await self.upstream.write_message(data, binary=True)
@@ -152,15 +175,11 @@ class DosSession:
                 printed = data.startswith(b"MSG\n")
                 if self.current_run is not None:
                     frame = base64.b64encode(data).decode("ascii")
-                    if sum(len(f) for f in self.current_run["frames"]) + len(frame) <= MAX_HISTORY_BYTES:
+                    if sum(len(f) for f in self.current_run["frames"]) + len(frame) <= self.history_bytes:
                         self.current_run["frames"].append(frame)
                     else:
                         self.current_run["truncated"] = True
-                    while (
-                        len(self.history) > 1
-                        and sum(len(f) for run in self.history for f in run["frames"]) > MAX_HISTORY_BYTES
-                    ):
-                        self.history.pop(0)
+                    self.trim_history()
                 if not printed:
                     success = data.split(b"\n", 2)[1:2] == [b"OK"]
                     if self.pending == "connect" and success:
@@ -227,19 +246,22 @@ class DosSessionManager:
             raise ConnectionError("DOS 会话不存在。", 404)
         return session
 
-    async def create(self, owner, path, connection_id):
+    async def create(self, owner, path, connection_id, history=None):
         path = document_path(path)
+        limits = validated_history_options({} if history is None else history)
         async with self.lock, self.connections.lock:
             for session in self.sessions.values():
                 if session.owner == owner and session.path == path:
                     if session.profile["id"] != connection_id:
                         raise ConnectionError("此文件已有会话，连接已固定。", 409)
+                    session.configure_history(*limits)
                     return session
             if len(self.sessions) >= 40:
                 raise ConnectionError("DOS 会话过多，请先在正在运行面板中关闭不需要的会话。", 429)
             profile = self.connections.find(connection_id)
             password = self.connections.credentials.get(profile)
             session = DosSession(owner, path, profile, password)
+            session.configure_history(*limits)
             self.sessions[session.id] = session
             return session
 

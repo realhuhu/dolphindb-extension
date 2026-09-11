@@ -109,7 +109,7 @@ def test_table_preview_is_bounded_and_quotes_database_and_table_names():
     session = WorkspaceSession()
     data = inspect_session(session, "tablePreview", {"database": 'dfs://market"', "table": 't");evil();("'})
     assert session.calls == ['select top 100 * from loadTable("dfs://market\\\"", "t\\\");evil();(\\\"")']
-    assert data == {"columns": ["id", "price"], "rows": [["1", "10"], ["2", "20"]],
+    assert data == {"columns": ["id", "price"], "columnTypes": ["int64", "int64"], "rows": [["1", "10"], ["2", "20"]],
                     "totalRows": 2, "sortRanks": [[0, 1], [0, 1]]}
 
 

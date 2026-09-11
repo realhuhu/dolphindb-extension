@@ -4,11 +4,12 @@ import { Signal } from '@lumino/signaling';
 import { request, type Profile } from '../api';
 import type { ConnectionModel } from '../model';
 import type { DatabaseEntry, VariableEntry, DisplayValue } from '../dos/runtime';
+import type { BrowseRequest, DataPage, DataTarget } from '../data/types';
 
 export const COMM_TARGET = 'dolphindb-extension:notebook';
 export const LOAD_CODE = "from dolphindb_extension.magics import load_notebook_extension as _ddb_load\n_ddb_load(get_ipython())\ndel _ddb_load";
 type KernelProfile = Pick<Profile, 'id' | 'name' | 'host' | 'port'>;
-type State = { kind: 'state'; profile: KernelProfile | null; locked: boolean; busy: boolean; configuring: boolean; requestedId: string | null; error: string | null };
+type State = { kind: 'state'; profile: KernelProfile | null; locked: boolean; busy: boolean; configuring: boolean; requestedId: string | null; error: string | null; browserOwner?: string; sessionId?: string };
 
 /** A comm observes the Python kernel; disposing a notebook view keeps its DDB session. */
 export class NotebookConnection {
@@ -22,6 +23,9 @@ export class NotebookConnection {
   notice: string | null = null;
   followsDefault = true;
   languageRevision = 0;
+  browserOwner = '';
+  sessionId = '';
+  browserIdentity(): string { return `${this.context.session?.kernel?.id}:${this.profile?.id}:${this.sessionId}`; }
   databases: DatabaseEntry[] = [];
   variables: VariableEntry[] = [];
   databaseError: string | null = null;
@@ -38,6 +42,7 @@ export class NotebookConnection {
   private initializing: Promise<void> | null = null;
   private disposed = false;
   private lastSnapshot;
+  private lastSettings = '';
   private metadataRequests = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 
   constructor(readonly context: ISessionContext, readonly connections: ConnectionModel) {
@@ -61,6 +66,7 @@ export class NotebookConnection {
   }
 
   private connectionsChanged(): void {
+    this.syncSettings();
     const changed = this.lastSnapshot !== this.connections.state;
     this.lastSnapshot = this.connections.state;
     if (changed && this.phase === 'ready' && !this.locked && !this.busy) {
@@ -70,6 +76,9 @@ export class NotebookConnection {
   }
 
   private reset(): void {
+    this.lastSettings = '';
+    this.browserOwner = '';
+    this.sessionId = '';
     this.clearPanels();
     this.languageRevision++;
     this.rejectMetadata();
@@ -147,6 +156,8 @@ export class NotebookConnection {
         }
         const data = message.content.data as unknown as State;
         if (data.kind !== 'state') { return; }
+        this.browserOwner = data.browserOwner ?? '';
+        this.sessionId = data.sessionId ?? '';
         const changed = this.busy && !data.busy || this.profile?.id !== data.profile?.id || this.locked !== data.locked;
         if (changed) { this.languageRevision++; this.panelDirty = true; }
         if (this.profile?.id !== data.profile?.id || this.locked && !data.locked) { this.clearPanels(); }
@@ -178,7 +189,8 @@ export class NotebookConnection {
         this.notice = 'DDB 扩展已卸载或连接已断开，请点击重试。';
         this.changed.emit();
       };
-      comm.open({});
+      comm.open({ settings: this.runtimeSettings() });
+      this.lastSettings = JSON.stringify(this.runtimeSettings());
     } catch (error) {
       if (current()) { this.phase = 'error'; this.notice = error instanceof Error ? error.message : 'DDB 初始化失败，请重试。'; }
     } finally { if (current()) { this.changed.emit(); } }
@@ -216,6 +228,7 @@ export class NotebookConnection {
     // Missing/unsupported DDB is not a reason to reject ordinary kernel code.
     // Retry initialization only when explicitly requested or the kernel changes.
     if (this.phase !== 'error' && this.phase !== 'unsupported') { await this.initialize(); }
+    this.syncSettings();
     await new Promise<void>((resolve, reject) => {
       const finish = (error?: Error) => {
         clearTimeout(timer);
@@ -294,15 +307,23 @@ export class NotebookConnection {
     if (this.executing || this.loading) { return; }
     const generation = this.panelGeneration, revision = this.languageRevision;
     try {
+      const rows = this.connections.preferences.value.preview.tableRows;
       const value = await this.metadata('tablePreview', { database, table }) as DisplayValue;
       if (generation === this.panelGeneration && revision === this.languageRevision && !this.disposed) {
-        this.previewReady.emit({ title: `${table} · 前 100 行`, value });
+        this.previewReady.emit({ title: `${table} · 前 ${rows} 行`, value });
       }
     } catch (error) {
       if (generation === this.panelGeneration && !this.disposed) {
         this.databaseError = error instanceof Error ? error.message : '无法预览表。'; this.changed.emit();
       }
     }
+  }
+
+  async browse(target: DataTarget, query: BrowseRequest): Promise<DataPage> {
+    const generation = this.generation, revision = this.languageRevision;
+    const page = await this.metadata('browse', { target: JSON.stringify(target), request: JSON.stringify(query) }) as DataPage;
+    if (this.disposed || generation !== this.generation || target.kind !== 'result' && revision !== this.languageRevision) { throw new Error('会话已变化，请刷新。'); }
+    return page;
   }
 
   async previewVariable(name: string): Promise<DisplayValue> {
@@ -356,7 +377,7 @@ export class NotebookConnection {
       };
       const armTimeout = () => {
         clearTimeout(timer);
-        timer = setTimeout(() => settle(new Error('DDB 元数据读取超时。')), 4000);
+        timer = setTimeout(() => settle(new Error('DDB 元数据读取超时。')), this.connections.preferences.value.advanced.metadataTimeout * 1000);
       };
       const queuedStatus = (_sender: ISessionContext, status: Kernel.Status) => {
         if (started || settled) { return; }
@@ -377,7 +398,7 @@ export class NotebookConnection {
       this.context.statusChanged.connect(queuedStatus);
       armTimeout();
       try {
-        future = comm.send({ kind: 'metadata', id, operation, arguments: args });
+        future = comm.send({ kind: 'metadata', id, operation, arguments: args, settings: this.runtimeSettings() });
         future.onIOPub = message => {
           if (!settled && message.header.msg_type === 'status'
             && (message as KernelMessage.IStatusMsg).content.execution_state === 'busy') {
@@ -399,5 +420,15 @@ export class NotebookConnection {
     this.context.connectionStatusChanged.disconnect(this.connectionStatusChanged, this);
     this.reset();
     Signal.clearData(this);
+  }
+
+  private runtimeSettings() {
+    const { dataBrowser, preview, advanced } = this.connections.preferences.value;
+    return { dataBrowser: { ...dataBrowser }, preview: { tableRows: preview.tableRows }, advanced: { ...advanced } };
+  }
+  private syncSettings(): void {
+    if (!this.comm || this.comm.isDisposed || this.disposed) { return; }
+    const settings = this.runtimeSettings(), key = JSON.stringify(settings);
+    if (key !== this.lastSettings) { this.comm.send({ kind: 'settings', settings }); this.lastSettings = key; }
   }
 }

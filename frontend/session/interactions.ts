@@ -32,7 +32,7 @@ export class DebouncedActions {
 }
 
 /** Preserve the editor/selection that was active when the sidebar was clicked. */
-export function captureVariableInsertion(editor: CodeEditor.IEditor | null | undefined, name: string,
+export function captureVariableInsertion(editor: CodeEditor.IEditor | null | undefined, name: string | (() => string),
   isCurrent: () => boolean, activate: () => void = () => {}): (() => void) | null {
   if (!editor || editor.isDisposed || editor.getOption('readOnly') || !isCurrent()) { return null; }
   const source = editor.model.sharedModel.getSource();
@@ -45,9 +45,10 @@ export function captureVariableInsertion(editor: CodeEditor.IEditor | null | und
     // Yjs otherwise merges a sidebar insertion with adjacent typing in its capture window.
     const shared = editor.model.sharedModel as typeof editor.model.sharedModel & { undoManager?: { stopCapturing(): void } | null };
     shared.undoManager?.stopCapturing();
-    shared.updateSource(offsets[0], offsets[1], name);
+    const text = typeof name === 'function' ? name() : name;
+    shared.updateSource(offsets[0], offsets[1], text);
     shared.undoManager?.stopCapturing();
-    const cursor = editor.getPositionAt(offsets[0] + name.length)!;
+    const cursor = editor.getPositionAt(offsets[0] + text.length)!;
     editor.setSelection({ start: cursor, end: cursor });
     activate();
     editor.focus();

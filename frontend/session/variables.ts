@@ -81,9 +81,10 @@ export function variableDescription(variable: VariableEntry): string {
 /** One top-level evaluation checks the live size before returning a single object.
  * Never wrap mutable values in an ANY vector: that strips their ownership.
  */
-export function variablePreviewScript(name: string): string {
+export function variablePreviewScript(name: string, limit = Number(VARIABLE_PREVIEW_LIMIT)): string {
+  if (!Number.isInteger(limit) || limit < 1024 || limit > 1048576) { throw new Error('变量预览大小上限无效。'); }
   const literal = JSON.stringify(name);
   return `if ((exec count(*) from objs(true) where name = ${literal}) == 0) throw "变量已不存在，请刷新变量面板。";\n`
-    + `if ((exec first(bytes) from objs(true) where name = ${literal}) > ${VARIABLE_PREVIEW_LIMIT}) throw "变量超过 10 KiB，请刷新变量面板。";\n`
+    + `if ((exec first(bytes) from objs(true) where name = ${literal}) > ${limit}) throw "变量超过 ${formatBytes(BigInt(limit))}，请刷新变量面板。";\n`
     + `objByName(${literal})`;
 }

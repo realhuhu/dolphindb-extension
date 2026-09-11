@@ -4,14 +4,16 @@ import json
 import pprint
 from itertools import islice
 
+from .preferences import resolve_runtime_settings
 
-def _variable_preview(session, name):
-    # Same 10 KiB limit as upstream DdbVar.resolve_tooltip. Check inside the
+
+def _variable_preview(session, name, limit=10240):
+    # Default matches upstream DdbVar.resolve_tooltip. Check inside the
     # evaluation, since a shared variable may have grown since the last snapshot.
     # Return a single object: putting mutable objects in an ANY vector loses ownership.
     value = session.run(
         f'if ((exec count(*) from objs(true) where name = {name}) == 0) throw "变量已不存在，请刷新变量面板。";\n'
-        f'if ((exec first(bytes) from objs(true) where name = {name}) > 10240) throw "变量超过 10 KiB，请刷新变量面板。";\n'
+        f'if ((exec first(bytes) from objs(true) where name = {name}) > {limit}) throw "变量超过预览大小上限，请刷新变量面板。";\n'
         f'objByName({name})'
     )
     return _variable_display(value)
@@ -65,6 +67,7 @@ def _records(value):
 
 
 def _table_preview(table):
+    from .browser import _type
     # As in SQL result widgets, order the original data before serializing display text.
     # pandas retains INT64, Decimal and datetime precision here; JSON carries only ranks.
     sort_ranks = []
@@ -79,6 +82,7 @@ def _table_preview(table):
         except (TypeError, ValueError):
             sort_ranks.append(None)  # Unordered values, such as arrays, retain a text fallback.
     return {"columns": [str(column) for column in table.columns],
+            "columnTypes": [_type(table.iloc[:, index]) for index in range(len(table.columns))],
             "rows": [[str(value)[:2000] for value in row] for row in table.itertuples(index=False, name=None)],
             "totalRows": len(table), "sortRanks": sort_ranks}
 
@@ -125,7 +129,8 @@ def _workspace(session, include_variables):
     return data
 
 
-def inspect_session(session, operation: str, arguments: dict):
+def inspect_session(session, operation: str, arguments: dict, settings=None):
+    settings = resolve_runtime_settings(settings if settings is not None else {})
     def literal(key):
         value = arguments.get(key)
         if not isinstance(value, str) or not value or len(value) > 2048 or "\0" in value:
@@ -141,7 +146,8 @@ def inspect_session(session, operation: str, arguments: dict):
     if operation == "workspace":
         return _workspace(session, arguments.get("includeVariables") == "true")
     if operation == "tablePreview":
-        table = session.run(f"select top 100 * from loadTable({literal('database')}, {literal('table')})")
+        rows = settings["preview"]["tableRows"]
+        table = session.run(f"select top {rows} * from loadTable({literal('database')}, {literal('table')})")
         if not hasattr(table, "columns") or not hasattr(table, "itertuples"):
             raise ValueError("Expected a table preview")
         return _table_preview(table)
@@ -153,7 +159,7 @@ def inspect_session(session, operation: str, arguments: dict):
         result["totalRows"] = len(schema)
         return result
     if operation == "variablePreview":
-        return _variable_preview(session, literal("name"))
+        return _variable_preview(session, literal("name"), settings["advanced"]["variablePreviewBytes"])
 
     if operation == "snapshot":
         variables = [{key: str(row.get(key, "")) for key in ("name", "form", "type")}

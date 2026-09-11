@@ -182,7 +182,7 @@ test('sidebar insertion is a separate undo step from adjacent editor typing', as
   } finally { shared.dispose(); }
 });
 
-test('the shared workspace follows DOS/notebook focus and removes disposed registrations', () => {
+function createWorkspace({ nativeShell = true, autoOpen = true } = {}) {
   class Panel {
     title = {};
     binding = null;
@@ -195,12 +195,25 @@ test('the shared workspace follows DOS/notebook focus and removes disposed regis
     '@lumino/coreutils': { Token: class {} },
     '@lumino/disposable': { DisposableDelegate: class { constructor(fn) { this.dispose = fn; } } },
     '../dos/views': { WorkspacePanel: Panel },
+    '../data/plugin': {},
+    '../settings': {},
   };
   const sandbox = { exports: {}, require: id => { assert.ok(modules[id], id); return modules[id]; } };
   vm.runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../frontend/session/workspace.ts'), 'utf8'),
     { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, sandbox);
-  const shell = { currentWidget: null, currentChanged: new Signal({}), add() {}, activateById() {} };
-  const workspace = new sandbox.exports.SessionWorkspace({ shell, restored: Promise.resolve() });
+  const shell = { currentWidget: null, currentChanged: new Signal({}), rightCollapsed: true, activations: [], add() {},
+    activateById(id) { this.activations.push(id); this.rightCollapsed = false; }, collapseRight() { this.rightCollapsed = true; } };
+  const preferences = require('./preferences.cjs').preferences();
+  preferences.value.sidebar.autoOpenWorkspace = autoOpen;
+  let finishRestore;
+  const restored = new Promise(resolve => { finishRestore = resolve; });
+  const workspace = new sandbox.exports.SessionWorkspace({ shell, restored }, {}, preferences, nativeShell ? { restored } : null);
+  return { workspace, shell, preferences, async restore(layout) { finishRestore(layout); await restored; } };
+}
+
+test('the shared workspace follows DOS/notebook focus and removes disposed registrations', async () => {
+  const { workspace, shell, preferences, restore } = createWorkspace();
+  await restore({ fresh: true });
   const dos = {}, notebook = {}, other = {};
   const dosBinding = { model: {}, path: () => 'a.dos', scope: 'file' };
   const changes = [];
@@ -217,8 +230,68 @@ test('the shared workspace follows DOS/notebook focus and removes disposed regis
   shell.currentWidget = other; shell.currentChanged.emit();
   assert.equal(workspace.panel.binding, null);
   assert.deepEqual(changes, [true, false]);
+  preferences.value.sidebar.autoOpenWorkspace = false;
+  const previousReveals = shell.activations.length;
   shell.currentWidget = notebook; shell.currentChanged.emit();
+  assert.equal(shell.activations.length, previousReveals, 'disabled auto-open still tracks the active document');
+  workspace.sync(true);
+  assert.equal(shell.activations.length, previousReveals + 1, 'the explicit toolbar action can always open the workspace');
   notebookRegistration.dispose();
   assert.equal(workspace.panel.binding, null);
   assert.deepEqual(changes, [true, false, true, false]);
+});
+
+test('manual sidebar collapse survives switching documents, returning from a browser and execution updates', async () => {
+  const { workspace, shell, restore } = createWorkspace();
+  const dos = {}, notebook = {}, browser = {};
+  workspace.register(dos, { model: {}, path: () => 'a.dos' });
+  workspace.register(notebook, { model: {}, path: () => 'b.ipynb' });
+  shell.currentWidget = dos; shell.currentChanged.emit();
+  assert.equal(shell.activations.length, 0, 'do not interfere while Jupyter restores the layout');
+  await restore({ fresh: true });
+  assert.equal(shell.activations.length, 1, 'introduce the workspace once in a fresh layout');
+  shell.collapseRight();
+  for (const widget of [notebook, browser, dos, notebook]) {
+    shell.currentWidget = widget; shell.currentChanged.emit();
+    workspace.sync();
+    assert.equal(shell.rightCollapsed, true);
+  }
+  assert.equal(shell.activations.length, 1);
+  workspace.sync(true);
+  assert.equal(shell.rightCollapsed, false, 'the explicit workspace button still opens the panel');
+  shell.activateById('debugger');
+  shell.currentWidget = dos; shell.currentChanged.emit();
+  assert.equal(shell.activations.at(-1), 'debugger', 'document changes must not replace a selected sidebar tab');
+});
+
+test('restored sidebar layout takes precedence over auto-open, including delayed document registration', async () => {
+  for (const collapsed of [true, false]) {
+    const { workspace, shell, restore } = createWorkspace();
+    shell.rightCollapsed = collapsed;
+    await restore({ rightArea: { collapsed, widgets: [workspace.panel], currentWidget: collapsed ? null : workspace.panel } });
+    shell.currentWidget = {};
+    workspace.register(shell.currentWidget, { model: {}, path: () => 'restored.ipynb' });
+    workspace.sync();
+    assert.equal(shell.activations.length, 0);
+    assert.equal(shell.rightCollapsed, collapsed);
+  }
+  const { workspace, shell, restore } = createWorkspace();
+  await restore({ rightArea: { widgets: [{}], currentWidget: { id: 'debugger' } } });
+  shell.currentWidget = {};
+  workspace.register(shell.currentWidget, { model: {}, path: () => 'new.dos' });
+  assert.equal(shell.activations.length, 0, 'installing the extension must not replace a restored sidebar tab');
+});
+
+test('auto-open can be disabled in a fresh layout and works once without the LabShell service', async () => {
+  for (const autoOpen of [true, false]) {
+    const { workspace, shell, restore } = createWorkspace({ nativeShell: false, autoOpen });
+    await restore();
+    for (const path of ['a.dos', 'b.ipynb']) {
+      shell.currentWidget = {};
+      workspace.register(shell.currentWidget, { model: {}, path: () => path });
+    }
+    assert.equal(shell.activations.length, autoOpen ? 1 : 0);
+    workspace.sync(true);
+    assert.equal(shell.activations.length, autoOpen ? 2 : 1);
+  }
 });

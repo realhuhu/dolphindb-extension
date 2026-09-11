@@ -60,6 +60,14 @@ export default {
     const attach = (panel: NotebookPanel) => {
       if (models.has(panel)) { return; }
       const model = notebookConnection(panel.sessionContext, connections);
+      let browserOwner = '', removeBrowser = () => {};
+      const bindBrowser = () => {
+        if (browserOwner !== model.browserOwner) {
+          removeBrowser(); browserOwner = model.browserOwner;
+          removeBrowser = browserOwner ? workspace.browser.register(browserOwner, (target, query) => model.browse(target, query)) : () => {};
+        }
+      };
+      model.changed.connect(bindBrowser); bindBrowser();
       models.set(panel, model);
       const isCurrent = () => !panel.isDisposed && app.shell.currentWidget === panel;
       const workspaceBinding = workspace.register(panel, {
@@ -138,6 +146,7 @@ export default {
         workspace.sync();
       });
       panel.disposed.connect(() => {
+        model.changed.disconnect(bindBrowser); removeBrowser();
         workspaceBinding.dispose();
         model.previewReady.disconnect(preview);
         for (const dispose of unbind.values()) { dispose(); }

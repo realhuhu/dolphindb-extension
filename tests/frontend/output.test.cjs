@@ -5,7 +5,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-const sandbox = { exports: {} };
+const sandbox = { exports: {}, require: id => { assert.equal(id, '../data/types'); return { DATA_MIME: 'application/vnd.dolphindb.data+json' }; } };
 vm.runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../frontend/dos/output-model.ts'), 'utf8'),
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, sandbox);
 const { OutputAdapter, resultData, TABLE_MIME } = sandbox.exports;
@@ -92,7 +92,7 @@ test('variable previews keep SDK grids, matrix orientation, exact integers and b
       { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, module);
     return module.exports;
   };
-  const { variableDisplayValue } = load('dos/runtime.ts', { './table': load('dos/table.ts'), '../session/variables': load('session/variables.ts') });
+  const { variableDisplayValue } = load('dos/runtime.ts', { './table': load('dos/table.ts'), '../session/variables': load('session/variables.ts'), '../data/names': load('data/names.ts') });
   const vector = (type, value, extra = {}) => new DdbObj({ form: DdbForm.vector, type, value, rows: value.length, ...extra });
   const values = BigInt64Array.of(9007199254740993n, 9007199254740992n, -10n);
   for (const form of [DdbForm.vector, DdbForm.set, DdbForm.pair]) {

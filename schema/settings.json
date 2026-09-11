@@ -1,19 +1,81 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "DolphinDB",
-  "description": "DolphinDB 的连接默认值与侧栏显示设置。修改后即时生效；新增连接默认值只影响随后打开的新建表单。",
+  "description": "DolphinDB 的显示、浏览、执行、代码辅助和连接设置。界面偏好即时生效；分页默认值用于新浏览器，查询与资源限额在后续请求应用。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "display": {
+      "title": "数字显示",
+      "description": "设置 DOS 结果、数据浏览器与变量预览的小数位数。Notebook 的普通 Python 输出仍使用原生显示设置。",
+      "type": "object", "additionalProperties": false,
+      "default": { "decimals": null },
+      "properties": {
+        "decimals": {
+          "title": "小数位数",
+          "description": "应用于 DOS 结果、DDB 自定义输出、数据浏览器、图表与变量预览，不改变 Python 原生输出。实际精度保留原有位数；固定小数位数只影响显示。",
+          "type": ["integer", "null"], "minimum": 0, "maximum": 20, "default": null,
+          "enum": [null, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+          "enumNames": ["实际精度", "0 位", "1 位", "2 位", "3 位", "4 位", "5 位", "6 位", "7 位", "8 位", "9 位", "10 位", "11 位", "12 位", "13 位", "14 位", "15 位", "16 位", "17 位", "18 位", "19 位", "20 位"]
+        }
+      }
+    },
+    "dataBrowser": {
+      "title": "数据浏览器", "description": "新浏览器和新执行结果的默认分页大小。已手动翻页或调整大小的浏览器保留当前状态。",
+      "type": "object", "additionalProperties": false, "default": { "pageSize": 100, "columnPageSize": 50 },
+      "properties": {
+        "pageSize": { "title": "默认每页行数", "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+        "columnPageSize": { "title": "默认每页列数", "description": "不包含索引列。宽表和矩阵按此数量分页。", "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+      }
+    },
+    "preview": {
+      "title": "预览", "type": "object", "additionalProperties": false,
+      "default": { "tableRows": 100, "variableHover": true, "tableHover": true, "hoverDelay": 350 },
+      "properties": {
+        "tableRows": { "title": "表预览行数", "description": "点击表名右侧眼睛按钮时读取的前 N 行；不影响完整数据浏览器。", "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+        "variableHover": { "title": "悬浮预览变量", "type": "boolean", "default": true },
+        "tableHover": { "title": "悬浮预览表结构", "type": "boolean", "default": true },
+        "hoverDelay": { "title": "悬浮预览延迟（毫秒）", "type": "integer", "minimum": 0, "maximum": 2000, "default": 350 }
+      }
+    },
+    "output": {
+      "title": "执行结果", "type": "object", "additionalProperties": false, "default": { "autoScroll": true, "defaultExpanded": true },
+      "properties": {
+        "autoScroll": { "title": "自动滚动到最新结果", "description": "仅作用于 DOS 执行结果；手动折叠不会触发滚动。", "type": "boolean", "default": true },
+        "defaultExpanded": { "title": "新执行记录默认展开", "description": "仅设置未手动调整的记录。文档内的全部展开、全部折叠操作优先。", "type": "boolean", "default": true }
+      }
+    },
+    "execution": {
+      "title": "运行", "type": "object", "additionalProperties": false, "default": { "stopOnError": true },
+      "properties": {
+        "stopOnError": { "title": "批量运行遇错停止", "description": "关闭后，出错文件仍保留错误结果，继续运行后续文件。使用开始批量运行时的设置。", "type": "boolean", "default": true }
+      }
+    },
+    "advanced": {
+      "title": "高级", "description": "DOS 和 Notebook 使用相同的预览及浏览缓存限额。缓存保留最新对象；清理已发生的历史和缓存无法恢复。",
+      "type": "object", "additionalProperties": false,
+      "default": { "variablePreviewBytes": 10240, "cacheEntries": 20, "cacheMegabytes": 64, "historyEntries": 20, "historyMegabytes": 8, "metadataTimeout": 4 },
+      "properties": {
+        "variablePreviewBytes": { "title": "变量悬浮预览大小上限（字节）", "description": "超出时仅显示元信息，可手动在完整数据浏览器打开。", "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 10240 },
+        "cacheEntries": { "title": "执行结果缓存数量", "description": "每个浏览器页面或 Python 内核最多保留的结果对象数。", "type": "integer", "minimum": 1, "maximum": 200, "default": 20 },
+        "cacheMegabytes": { "title": "执行结果缓存预算（MiB）", "description": "按对象估算内存淘汰旧结果，始终保留最新对象。后续缓存访问时应用。", "type": "integer", "minimum": 1, "maximum": 1024, "default": 64 },
+        "historyEntries": { "title": "DOS 历史保留次数", "description": "下次运行或重新打开会话时应用，不改变 Notebook 自身的输出历史。", "type": "integer", "minimum": 1, "maximum": 200, "default": 20 },
+        "historyMegabytes": { "title": "DOS 历史帧预算（MiB）", "description": "限制服务端恢复历史所保存的帧数据；下次运行或重新打开会话时应用。", "type": "integer", "minimum": 1, "maximum": 64, "default": 8 },
+        "metadataTimeout": { "title": "Notebook 元数据读取超时（秒）", "description": "用于浏览、预览和元数据查询；不包括等待其他单元格执行的时间，不中断用户脚本。", "type": "integer", "minimum": 1, "maximum": 120, "default": 4 }
+      }
+    },
     "language": {
       "title": "代码提示与模块",
       "type": "object",
       "additionalProperties": false,
-      "default": { "moduleRoot": "", "documentationLanguage": "zh", "automaticCompletion": true },
+      "default": { "moduleRoot": "", "documentationLanguage": "zh", "automaticCompletion": true, "hoverDocumentation": true, "signatureHelp": true, "diagnostics": true },
       "properties": {
         "moduleRoot": { "title": "模块目录", "description": "相对 Jupyter 文件根目录的路径；留空时索引当前文件所在目录及子目录中的 DOS 模块。", "type": "string", "default": "" },
         "documentationLanguage": { "title": "函数文档语言", "type": "string", "enum": ["zh", "en"], "enumNames": ["中文", "English"], "default": "zh" },
-        "automaticCompletion": { "title": "自动显示 DDB 补全", "description": "输入时显示提示；关闭后仍可使用 Ctrl+Space。", "type": "boolean", "default": true }
+        "automaticCompletion": { "title": "自动显示 DDB 补全", "description": "输入时显示提示；关闭后仍可使用 Ctrl+Space。", "type": "boolean", "default": true },
+        "hoverDocumentation": { "title": "悬浮显示代码文档", "type": "boolean", "default": true },
+        "signatureHelp": { "title": "自动显示函数参数提示", "description": "关闭后仍可用 Ctrl+Shift+Space 手动调用。", "type": "boolean", "default": true },
+        "diagnostics": { "title": "显示代码诊断", "type": "boolean", "default": true }
       }
     },
     "connectionDefaults": {
@@ -59,8 +121,11 @@
       "title": "侧栏显示",
       "type": "object",
       "additionalProperties": false,
-      "default": { "sortOrder": "saved", "showConnectionDetails": true, "alwaysShowSearch": false },
+      "default": { "sortOrder": "saved", "showConnectionDetails": true, "showConnectionAddress": true, "alwaysShowSearch": false, "autoOpenWorkspace": true, "collapseLeftOnNarrow": true },
       "properties": {
+        "showConnectionAddress": { "title": "显示连接地址", "description": "关闭后，连接列表只显示名称，编辑连接时仍显示地址。", "type": "boolean", "default": true },
+        "autoOpenWorkspace": { "title": "首次打开文档时显示数据库与变量面板", "description": "仅在尚未保存面板布局时自动显示一次；之后遵循 Jupyter 保存的布局。手动收起或切换侧栏后，切换文档和执行代码只更新内容，可用工具栏按钮重新打开。", "type": "boolean", "default": true },
+        "collapseLeftOnNarrow": { "title": "窄窗口打开 DOS 时收起左侧栏", "description": "窗口宽度小于 1100 像素时为编辑器留出空间。", "type": "boolean", "default": true },
         "sortOrder": {
           "title": "连接排序",
           "description": "只调整侧栏显示顺序，保留已保存配置的顺序。",

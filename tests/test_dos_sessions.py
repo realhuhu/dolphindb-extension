@@ -140,7 +140,7 @@ async def test_script_errors_lock_the_connection_and_history_is_bounded(session,
         await model.send(b"API2 12345 20 / 0\nscript\nline://1\n42")
         await reply(model, socket, RESULT)
     assert len(model.history) == 20 and model.sequence == 22
-    monkeypatch.setattr("dolphindb_extension.dos_sessions.MAX_HISTORY_BYTES", 150)
+    monkeypatch.setattr(model, "history_bytes", 150)
     await model.send(b"API2 12345 20 / 0\nscript\nline://1\nprint(42)")
     socket.responses.put_nowait(b"MSG\n" + b"x" * 200 + b"\0")
     await reply(model, socket, RESULT)

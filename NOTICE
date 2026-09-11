@@ -13,6 +13,12 @@ Variable location/form grouping, descriptions and the hover preview size limit
 are adapted from upstream src/variables.ts. DOS hover values reuse the same
 DolphinDB SDK inspector; Jupyter's TreeView and Tooltip provide the UI.
 
+Chart options are extracted from upstream src/dataview/obj.tsx by
+scripts/sync_dataview.py, with hashes in frontend/upstream/dataview-provenance.json.
+Paged object browsing and table statement templates are adapted from the same
+data views and upstream src/commands.ts (table_action/get_clause). Charts use
+Apache ECharts (Apache-2.0) and Plotly.js (MIT), bundled for local rendering.
+
 Language symbols, completions, SQL contexts, definitions, hover, and module
 diagnostics are extracted from src/languageserver by scripts/sync_language.py.
 Their upstream revision, source hashes, and browser/Jupyter adaptations are

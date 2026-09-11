@@ -7,21 +7,38 @@ export const SETTINGS_ID = 'dolphindb-extension:settings';
 export const IExtensionSettings = new Token<SettingsModel>('dolphindb-extension:IExtensionSettings');
 
 export interface ExtensionSettings {
-  readonly language: { readonly moduleRoot: string; readonly documentationLanguage: 'zh' | 'en'; readonly automaticCompletion: boolean };
+  readonly display: { readonly decimals: number | null };
+  readonly dataBrowser: { readonly pageSize: number; readonly columnPageSize: number };
+  readonly preview: { readonly tableRows: number; readonly variableHover: boolean; readonly tableHover: boolean; readonly hoverDelay: number };
+  readonly output: { readonly autoScroll: boolean; readonly defaultExpanded: boolean };
+  readonly execution: { readonly stopOnError: boolean };
+  readonly advanced: { readonly variablePreviewBytes: number; readonly cacheEntries: number; readonly cacheMegabytes: number;
+    readonly historyEntries: number; readonly historyMegabytes: number; readonly metadataTimeout: number };
+  readonly language: { readonly moduleRoot: string; readonly documentationLanguage: 'zh' | 'en'; readonly automaticCompletion: boolean;
+    readonly hoverDocumentation: boolean; readonly signatureHelp: boolean; readonly diagnostics: boolean };
   readonly connectionDefaults: Readonly<Pick<Draft, 'port' | 'username' | 'timeout' | 'ssl'>>;
   readonly sidebar: {
     readonly sortOrder: 'saved' | 'name' | 'host';
     readonly showConnectionDetails: boolean;
+    readonly showConnectionAddress: boolean;
     readonly alwaysShowSearch: boolean;
+    readonly autoOpenWorkspace: boolean;
+    readonly collapseLeftOnNarrow: boolean;
   };
 }
 
 // Keep the fallback usable in applications without a settings registry.
 // schema/settings.json defines the matching user-facing defaults and validation.
 export const DEFAULT_SETTINGS: ExtensionSettings = Object.freeze({
-  language: Object.freeze({ moduleRoot: '', documentationLanguage: 'zh', automaticCompletion: true }),
+  display: Object.freeze({ decimals: null }),
+  dataBrowser: Object.freeze({ pageSize: 100, columnPageSize: 50 }),
+  preview: Object.freeze({ tableRows: 100, variableHover: true, tableHover: true, hoverDelay: 350 }),
+  output: Object.freeze({ autoScroll: true, defaultExpanded: true }),
+  execution: Object.freeze({ stopOnError: true }),
+  advanced: Object.freeze({ variablePreviewBytes: 10240, cacheEntries: 20, cacheMegabytes: 64, historyEntries: 20, historyMegabytes: 8, metadataTimeout: 4 }),
+  language: Object.freeze({ moduleRoot: '', documentationLanguage: 'zh', automaticCompletion: true, hoverDocumentation: true, signatureHelp: true, diagnostics: true }),
   connectionDefaults: Object.freeze({ port: 8848, username: 'admin', timeout: 10, ssl: false }),
-  sidebar: Object.freeze({ sortOrder: 'saved', showConnectionDetails: true, alwaysShowSearch: false }),
+  sidebar: Object.freeze({ sortOrder: 'saved', showConnectionDetails: true, showConnectionAddress: true, alwaysShowSearch: false, autoOpenWorkspace: true, collapseLeftOnNarrow: true }),
 });
 
 function object(value: unknown): Record<string, unknown> {
@@ -29,10 +46,11 @@ function object(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {};
 }
 
-function integer(value: unknown, fallback: number, maximum: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= maximum
+function integer(value: unknown, fallback: number, maximum: number, minimum = 1): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum
     ? value : fallback;
 }
+const boolean = (value: unknown, fallback = true): boolean => typeof value === 'boolean' ? value : fallback;
 
 /** Resolve partial user/admin overrides without leaking settings into connection profiles. */
 export function resolveSettings(composite: unknown): ExtensionSettings {
@@ -41,11 +59,21 @@ export function resolveSettings(composite: unknown): ExtensionSettings {
   const sidebar = object(input.sidebar);
   const defaults = DEFAULT_SETTINGS;
   const language = object(input.language);
+  const browser = object(input.dataBrowser), preview = object(input.preview), output = object(input.output), advanced = object(input.advanced);
+  const decimals = object(input.display).decimals;
   return Object.freeze({
+    display: Object.freeze({ decimals: typeof decimals === 'number' && Number.isInteger(decimals) && decimals >= 0 && decimals <= 20 ? decimals : null }),
+    dataBrowser: Object.freeze({ pageSize: integer(browser.pageSize, 100, 1000), columnPageSize: integer(browser.columnPageSize, 50, 200) }),
+    preview: Object.freeze({ tableRows: integer(preview.tableRows, 100, 1000), variableHover: boolean(preview.variableHover), tableHover: boolean(preview.tableHover), hoverDelay: integer(preview.hoverDelay, 350, 2000, 0) }),
+    output: Object.freeze({ autoScroll: boolean(output.autoScroll), defaultExpanded: boolean(output.defaultExpanded) }),
+    execution: Object.freeze({ stopOnError: boolean(object(input.execution).stopOnError) }),
+    advanced: Object.freeze({ variablePreviewBytes: integer(advanced.variablePreviewBytes, 10240, 1048576, 1024), cacheEntries: integer(advanced.cacheEntries, 20, 200),
+      cacheMegabytes: integer(advanced.cacheMegabytes, 64, 1024), historyEntries: integer(advanced.historyEntries, 20, 200), historyMegabytes: integer(advanced.historyMegabytes, 8, 64), metadataTimeout: integer(advanced.metadataTimeout, 4, 120) }),
     language: Object.freeze({
       moduleRoot: typeof language.moduleRoot === 'string' ? language.moduleRoot.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '',
       documentationLanguage: language.documentationLanguage === 'en' ? 'en' : 'zh',
       automaticCompletion: typeof language.automaticCompletion === 'boolean' ? language.automaticCompletion : true,
+      hoverDocumentation: boolean(language.hoverDocumentation), signatureHelp: boolean(language.signatureHelp), diagnostics: boolean(language.diagnostics),
     }),
     connectionDefaults: Object.freeze({
       port: integer(connection.port, defaults.connectionDefaults.port, 65535),
@@ -61,6 +89,7 @@ export function resolveSettings(composite: unknown): ExtensionSettings {
         ? sidebar.showConnectionDetails : defaults.sidebar.showConnectionDetails,
       alwaysShowSearch: typeof sidebar.alwaysShowSearch === 'boolean'
         ? sidebar.alwaysShowSearch : defaults.sidebar.alwaysShowSearch,
+      showConnectionAddress: boolean(sidebar.showConnectionAddress), autoOpenWorkspace: boolean(sidebar.autoOpenWorkspace), collapseLeftOnNarrow: boolean(sidebar.collapseLeftOnNarrow),
     }),
   });
 }

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Tooltip, type TooltipElement } from '@jupyter/react-components';
 import type { DisplayValue } from '../dos/runtime';
 import type { WorkspaceBinding } from './types';
+import { usePreferences } from '../data/preferences';
 
 type Hover<Item> = { item: Item; anchor: HTMLElement; text: string; loading: boolean; value?: DisplayValue };
 const activeHovers = new WeakMap<WorkspaceBinding, () => void>();
@@ -10,9 +11,11 @@ const activeHovers = new WeakMap<WorkspaceBinding, () => void>();
 /** One delayed preview per workspace; responses and caches belong to a metadata snapshot. */
 export function useWorkspaceHover<Item>(binding: WorkspaceBinding, options: {
   snapshot: () => unknown; key: (item: Item) => string; read: (item: Item) => Promise<DisplayValue>;
-  blocked?: (item: Item) => string | null; error: string;
+  blocked?: (item: Item) => string | null; error: string; enabled?: boolean;
 }) {
   const [hover, setHover] = React.useState<Hover<Item> | null>(null);
+  const { preview, advanced } = usePreferences();
+  const enabled = options.enabled !== false;
   const id = React.useId();
   const state = React.useRef({ sequence: 0, show: undefined as ReturnType<typeof setTimeout> | undefined,
     hide: undefined as ReturnType<typeof setTimeout> | undefined, inTooltip: false, cache: new Map<string, Promise<DisplayValue>>() });
@@ -25,7 +28,7 @@ export function useWorkspaceHover<Item>(binding: WorkspaceBinding, options: {
   React.useLayoutEffect(() => {
     dismiss(); state.current.cache.clear();
     return dismiss;
-  }, [revision, snapshot, dismiss]);
+  }, [revision, snapshot, dismiss, enabled, preview.hoverDelay, advanced.variablePreviewBytes]);
   React.useEffect(() => {
     const outside = (event: Event) => { if (!(event.target instanceof Element) || !event.target.closest('.ddb-workspace-tooltip')) { dismiss(); } };
     const keydown = (event: KeyboardEvent) => { if (event.key === 'Escape' || event.key === 'Enter') { dismiss(); } };
@@ -46,6 +49,7 @@ export function useWorkspaceHover<Item>(binding: WorkspaceBinding, options: {
   };
   const leaveTooltip = () => { state.current.inTooltip = false; leave(); };
   const enter = (item: Item, anchor: HTMLElement) => {
+    if (!enabled) { return; }
     activeHovers.get(binding)?.();
     dismiss(); activeHovers.set(binding, dismiss);
     const sequence = state.current.sequence;
@@ -66,7 +70,7 @@ export function useWorkspaceHover<Item>(binding: WorkspaceBinding, options: {
       }
       void pending.then(value => { if (current()) { setHover({ ...initial, value, loading: false }); } },
         () => { if (current()) { setHover({ ...initial, text: options.error, loading: false }); } });
-    }, 350);
+    }, preview.hoverDelay);
   };
   return { id, hover, enter, leave, leaveTooltip, keep, dismiss };
 }

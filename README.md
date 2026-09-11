@@ -3,7 +3,7 @@
 将 [DolphinDB VS Code 插件](https://github.com/dolphindb/vscode-extension) 的能力迁移到 Jupyter，
 支持 DolphinDB 脚本开发和 Notebook 中的 DDB 代码执行。
 
-**当前版本为 `0.1.0a4`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
+**当前版本为 `0.1.0a5`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
 DolphinDB 连接，查看当前连接、节点名称和服务器版本；提供 Settings Editor、DOS 编辑与独立会话，以及 Notebook 中的
 `%ddb` / `%%ddb` 执行和 Python 返回值赋值，并在这些编辑区域复用上游语言服务。
 
@@ -51,8 +51,14 @@ JupyterHub 应使用每个用户独立的服务和数据目录。
 | 设置分组 | 可配置项 | 生效方式 |
 | --- | --- | --- |
 | 新增连接默认值 | 端口、用户名、连接超时、SSL | 用于随后打开的新增连接表单 |
-| 侧栏显示 | 添加顺序 / 名称 / 地址排序、显示连接详情、始终显示搜索框 | 保存后即时更新 |
-| 语言服务 | 模块目录、中文 / 英文函数文档、输入时自动补全 | 下一次提示或模块扫描生效 |
+| 侧栏显示 | 排序、地址与详情显隐、搜索框、首次自动打开数据库与变量面板、窄窗口收起左侧栏 | 显隐即时更新；自动打开仅用于尚未保存面板布局的首次文档，手动收起后保持收起，刷新后遵循 Jupyter 布局 |
+| 代码提示与模块 | 模块目录、文档语言、自动补全、悬浮文档、自动参数提示、代码诊断 | 已打开的编辑器同步开关；关闭自动参数提示仍可手动调用 |
+| 数字显示 | 实际精度，或 0–20 位小数 | 浏览器、结果表格和变量预览即时更新 |
+| 数据浏览器 | 默认每页 100 行、50 列，可设置 1–1000 行、1–200 列 | 用于新浏览器和新结果；已打开浏览器保留自己的分页状态 |
+| 预览 | 表预览行数、变量与表结构悬浮开关、悬浮延迟 | 后续预览使用新值；关闭开关会撤销当前悬浮框和待显示请求 |
+| 执行结果 | 自动滚动、新记录默认展开 | DOS 结果同步更新；保留记录手动折叠和文档内全部折叠的选择 |
+| 运行 | 批量运行遇错停止或继续 | 使用开始批量运行时的设置，弹窗会说明当前策略 |
+| 高级 | 变量预览字节上限、结果缓存数量与预算、DOS 历史数量与帧预算、Notebook 元数据超时 | 预览及缓存用于后续访问；历史在下次运行或重新打开会话时应用 |
 
 已有连接和正在编辑的表单保留各自配置。默认值不包含密码；连接列表及密码仍通过侧栏管理。
 设置由 Jupyter 的 `ISettingRegistry` 保存，支持 Settings Editor 的恢复默认值、JSON 编辑，
@@ -69,7 +75,10 @@ JSON 用户覆盖示例（未列出的字段继续使用默认值）：
 ```json
 {
   "connectionDefaults": { "timeout": 20 },
-  "sidebar": { "sortOrder": "name", "alwaysShowSearch": true }
+  "sidebar": { "sortOrder": "name", "showConnectionAddress": false, "alwaysShowSearch": true },
+  "dataBrowser": { "pageSize": 50, "columnPageSize": 20 },
+  "preview": { "tableRows": 200, "hoverDelay": 500 },
+  "advanced": { "cacheEntries": 30, "metadataTimeout": 15 }
 }
 ```
 
@@ -101,7 +110,7 @@ JSON 用户覆盖示例（未列出的字段继续使用默认值）：
 | 中断代码 | 工具栏「中断」；使用上游 getConsoleJobs / cancelConsoleJob 流程 |
 
 批量运行列出已打开以及文件浏览器选中的 DOS 文件，执行开始时读取代码快照，
-每个文件使用自己的连接和会话；遇到错误停止后续文件。命令面板的
+每个文件使用自己的连接和会话；默认遇到错误停止后续文件，可在设置中改为继续。命令面板的
 「DolphinDB: 停止后续批量运行」可取消剩余文件，当前代码需通过「中断」停止。
 中断沿用 SDK 的 urgent 通道，由 DolphinDB 在循环或子任务边界响应；单次 `sleep()` 等
 操作可能需要等其返回。详见 [DolphinDB 作业管理](https://docs.dolphindb.com/zh/tutorials/job_management_tutorial.html)。
@@ -113,15 +122,15 @@ JSON 用户覆盖示例（未列出的字段继续使用默认值）：
 用户显式创建的共享表、DFS 表等仍遵循 DolphinDB 自身的共享规则。
 
 数据库和变量面板随当前 DOS 文件或 Notebook 切换。点击数据库的表名，在编辑器光标处插入
-`loadTable("dfs://数据库路径", "表名")`；点击表名右侧的眼睛按钮，在弹窗中预览前 100 行。
-鼠标停留在表名 350 ms 后，悬浮显示字段名、类型及可用的附加信息和备注（最多前 100 个字段）。
+`loadTable("dfs://数据库路径", "表名")`；点击表名右侧的眼睛按钮，在弹窗中预览数据（默认前 100 行，可配置）。
+鼠标停留在表名后，悬浮显示字段名、类型及可用的附加信息和备注（默认延迟 350 ms，可配置；最多前 100 个字段）。
 结构预览只查询元数据，运行前可用，不会固定连接；切换连接、执行或刷新面板后会更新缓存。
 变量面板沿用 VS Code 插件的 **本地变量 / 共享变量 → 数据形式** 分组，显示标量、向量、
 词典、表格等类别；面板和分组显示变量数与总内存，变量行显示类型、元素数或行列数及内存。
 分组支持折叠，执行后保留折叠状态；搜索时展开匹配分组，清空搜索后恢复原状态。
 鼠标停留 350 ms 后使用原生提示框预览变量：表格、矩阵按行列显示，向量、集合、数对显示索引和值，
 词典显示键值对，复用执行结果的原生可排序表格。浮层最多显示前 10 行、8 个数据列；
-沿用上游 10 KiB 上限，大变量仅显示摘要。
+默认沿用上游 10 KiB 上限，可在高级设置调整，大变量仅显示摘要。
 预览在当前文档的会话中读取，不执行编辑器代码、不追加执行结果；同一份变量快照内复用预览，
 重新执行或刷新变量后失效。点击变量仍将名称插入原光标位置。
 DOS 文件底部显示表格、普通结果、
@@ -135,7 +144,7 @@ print 输出和错误行号；新输出到达时自动滚动到底部，持续 p
 DOS 和 Notebook 工具栏共用连接选择器、会话状态和 **关闭会话**，关闭前会提示释放 DDB 变量。
 两者复用 Jupyter 的 `ReactiveToolbar`、`ToolbarButton` 和 `HTMLSelect`，空间不足时通过原生溢出菜单访问操作。
 执行结果通过 `OutputArea` / rendermime 显示；表预览使用原生可排序 `Table`，点击列标题可切换排序。
-排序基于 SDK / pandas 的原始列值，保留负数、小数、INT64 和 Decimal 精度；表头排序仅影响当前显示的前 100 行。
+排序基于 SDK / pandas 的原始列值，保留负数、小数、INT64 和 Decimal 精度；表头排序仅影响当前页，不改变服务器数据。
 工具栏末尾的 **显示数据库与变量** 按钮可展开右侧面板，包括默认收起侧栏的 Notebook 7。
 数据库、变量区域复用 Jupyter Debugger 的原生折叠面板，可拖动分隔条调整高度、分别滚动，
 收起一块后另一块占用剩余空间；切换文档时保留折叠状态，面板和数据库树展开立即响应。
@@ -149,9 +158,54 @@ DOS 和 Notebook 工具栏共用连接选择器、会话状态和 **关闭会话
 网络连接真正断开时显示「已断开」，不会自动重建会话或重试代码；重启 Jupyter 会结束所有会话。
 
 会话由 Jupyter Server 内存管理，原始结果通过官方 SDK 解析，不需要额外 Node.js 运行时。
-每个会话最多保留最近 20 次执行及约 8 MiB 编码输出用于页面恢复，超限会提示省略。
+每个会话默认保留最近 20 次执行及约 8 MiB 编码输出用于页面恢复，可在高级设置调整，超限会提示省略。
 服务端校验 Jupyter 身份和 `dolphindb-extension:dos-sessions` 权限；不同登录身份不能接管
 对方会话，同一个 DOS 会话同时只允许一个页面连接。JupyterHub 使用用户独立的 Jupyter 服务。
+
+## 数据浏览器、结构和图表（当前开发版，尚未发布）
+
+DOS 结果支持内嵌数据浏览器，点击结果工具栏的 **在独立标签页查看** 可打开完整视图。
+Notebook 的展示行为按语句区分：
+
+- 单元格最后一个表达式直接调用 `%ddb` / `%%ddb` 时，自动显示自定义组件，例如 `xxx\n%ddb ...`。
+- `aaa = %ddb ...` 返回 `session.run` 的原始 Python 对象；之后直接显示 `aaa` 使用 Python / pandas 原生组件。
+- `ddb_show(对象)` 或 `%ddb_show 对象` 显式展示任意 Python 对象，包括普通 Python 创建的 DataFrame、数组、列表、词典和从 DDB 取得的对象。
+  表格、矩阵、张量等按类型展示，其他对象显示文本表示。该命令不重新执行 DDB 代码、不固定或切换连接。
+- `%%ddb -o aaa` 只保存原始对象，之后显示 `aaa` 仍使用原生组件；调用 `ddb_show(aaa)` 可显式切换展示方式。
+
+扩展加载后可直接调用 `ddb_show`，也可通过 `from dolphindb_extension import ddb_show` 导入。
+已有同名 Python 变量不会被覆盖，此时可使用 `%ddb_show` 或自行导入。
+两者也可点击变量右侧的眼睛按钮打开浏览标签页。数据库表的 **更多操作**
+菜单提供完整表浏览入口，眼睛按钮用于快速预览（默认前 100 行）。
+
+- 表、向量、数对、集合、词典和矩阵支持完整分页：每页 10–1,000 行，可跳转页码、首页和末页；
+  宽表及矩阵默认按 50 列翻页，可在设置中调整。词典、ANY 向量和数组向量可逐层展开，表可以逐列查看，顶部路径可返回上层。
+- 张量显示类型和维度，逐维选择切片，再分页查看叶节点。DOS 使用 SDK 的 shape、strides 和字节序，
+  保留 64 位整数；Notebook 使用 Python SDK 返回的 NumPy 数组。
+- 自动绘制折线、柱状、条形、面积、饼图、散点、直方图、K 线和三维曲面；支持图例、缩放、恢复视图及图像下载，
+  并保留堆叠与多 Y 轴。图表库随插件打包、按需加载，使用 Jupyter 明暗主题。
+- 数据库和表的 **更多操作 → 查看完整结构** 展示服务器返回的全部 schema 属性，包括 `colDefs`、
+  分区方案、引擎、排序键及压缩配置；嵌套字典和字段表可以继续展开。可在首次执行前查看，保持连接可切换。
+- 表菜单提供 `select`、`update`、`delete`、`truncate`、`loadTable` 和 `schema` 语句生成。
+  模板使用实际字段和分区列，填写条件后自行执行；菜单操作只向原文档光标插入文本。
+- 在 **Settings Editor → DolphinDB → 数字显示 → 小数位数** 统一选择 **实际精度** 或 **0–20 位小数**，
+  所有已打开的 DOS 结果、DDB 自定义输出、数据浏览器、图表与变量预览即时更新；普通 Python 输出遵循 Python / pandas 自己的显示设置。
+  只改变浮点数和 Decimal 的显示，排序和 `%ddb` 的返回对象保持原值；大整数、Decimal128 不经 JS Number 转换。
+
+实时浏览始终使用打开它的文档会话。后续执行后可刷新数据；关闭或更换原会话时会明确提示重新打开。
+分页、结构查询和预览不会追加执行历史。Notebook 使用 IPython 的原生 magic 转换和 AST 扩展点识别独立调用与赋值，不注册全局格式化器；
+`aaa = %ddb ...` 仍取得 `session.run` 返回的原生 Python 对象，之后直接显示 `aaa` 也保持原生表示。
+
+执行结果浏览缓存默认保留最近 20 个对象，以约 64 MiB 为淘汰预算，可在高级设置调整，最新结果始终保留；Notebook 缓存在原 Python 内核，
+DOS 缓存在浏览器。仅自定义展示保留浏览缓存，接收 `%ddb` 返回值不会额外缓存对象。
+缓存过期后浏览器分页提示重新展示，Notebook 原生输出不依赖这份缓存。
+表、向量和矩阵从会话按页读取；结构、图表及无法在服务器切片的张量在刷新时读取并缓存完整对象。
+图表类型、张量及 schema 字段取决于服务器和官方 SDK 的支持，旧服务器不提供的功能不会由插件伪造。
+
+高级设置默认限制变量悬浮预览为 10 KiB、DOS 历史为 20 次与 8 MiB 帧数据、Notebook 元数据读取为 4 秒。
+前端和服务端共同验证配置范围；清理历史或缓存不会修改 DolphinDB 会话变量。
+升级扩展后，服务端历史配置需要新的 Jupyter 服务进程，Notebook 后端配置需要加载新版扩展的 Python 内核；
+正常使用中修改设置不需要重启服务或内核。
 
 ## Notebook 中嵌入 DDB（当前开发版）
 
@@ -213,7 +267,7 @@ Python 内核的 DolphinDB 会话并固定连接，后续 `%ddb` 和 `%%ddb` 共
 关闭 Notebook 页面或刷新浏览器后，Python 内核和 DDB 会话仍可复用。执行 `%ddb_close` 或点击
 **关闭会话**释放 DDB 会话后可重新选连接；已有 Python 返回值变量仍保留在内核中。
 右侧数据库与变量面板在首次运行前预览所选连接的数据库；执行后自动显示该 Python 内核的 DDB
-会话变量，并在执行结束后刷新。表名点击插入 `loadTable(...)`，眼睛按钮预览前 100 行，预览不固定连接。
+会话变量，并在执行结束后刷新。表名点击插入 `loadTable(...)`，眼睛按钮按配置预览数据（默认前 100 行），预览不固定连接。
 关闭或重启 Python 内核会结束其 DDB 会话，也可以在 **正在运行的内核和终端 → DolphinDB 会话** 中只关闭 DDB 会话。
 会话列表通过 Jupyter comm 查询已有会话，关闭 Notebook 页面或刷新后仍能发现；未运行 DDB 的 Notebook 不会列入。
 如果两个 Notebook 显式共用同一个 Python 内核，它们也共用该 DDB 会话；DOS 文件会话保持独立。
@@ -290,7 +344,7 @@ Python 包已包含预构建前端，安装使用时无需 Node.js。
 使用 `notebook` 可选依赖同时安装 Notebook magic 所需的 DolphinDB Python SDK 与 IPython：
 
 ```shell
-pip install "dolphindb-extension[notebook]==0.1.0a4"
+pip install "dolphindb-extension[notebook]==0.1.0a5"
 ```
 
 仅使用 DOS 编辑器和连接管理时，可以省略 `[notebook]`。
@@ -315,6 +369,7 @@ uv sync --locked --extra notebook
 npm ci
 uv run --extra notebook python scripts/sync_upstream.py --check
 uv run --extra notebook python scripts/sync_language.py --check
+uv run --extra notebook python scripts/sync_dataview.py --check
 npm exec tsc
 uv run --extra notebook jupyter-builder build .
 npm test
@@ -346,18 +401,22 @@ GitHub Actions 检查源码复用的一致性、服务端 API、认证、二进�
 适配层用 Jupyter Contents 和各文档/内核的会话元数据替换 VS Code 的全局服务，使用
 CodeMirror 和 Jupyter 编辑器扩展注册接口展示提示，无需启动 Node 语言服务器。
 内置文档和签名直接使用上游同款 `DocsProvider`、`docs.zh.json` / `docs.en.json` 和语言关键字表。
+`scripts/sync_dataview.py` 提取 `src/dataview/obj.tsx` 的 `get_chart_option`，保留原图表系列构造，
+替换主题颜色和浏览器辅助函数，并修正空数据、常量直方图和零成交量 K 线边界。
+来源及适配记录见 `frontend/upstream/dataview-provenance.json`。浏览器分页沿用上游查询方式，
+表操作模板适配自 `src/commands.ts` 的 `table_action` / `get_clause`，UI 使用 Jupyter 原生组件。
 通信和数据类型解析直接使用上游锁定的 `dolphindb@3.1.41`。服务端仅识别连接、打印和结果
 的消息边界以保留会话及输出，不实现另一套 DolphinDB 数据类型编解码器。
 
-更新上游时先更新 submodule，再运行 `uv run python scripts/sync_upstream.py` 和
-`uv run python scripts/sync_language.py`，
+更新上游时先更新 submodule，再运行 `uv run python scripts/sync_upstream.py`、
+`uv run python scripts/sync_language.py` 和 `uv run python scripts/sync_dataview.py`，
 检查差异并重新构建。完整 VS Code 的 TreeView、编辑器等 API 由 Jupyter 适配；其他功能
 将在后续迁移中继续复用上游模块。构建产物包含所需代码，安装时不需要下载 submodule。
 
 ## 发布
 
-同步更新 `pyproject.toml` 与 `package.json` 中的版本（例如 `0.1.0a4` 对应
-`0.1.0-alpha.4`）、`package-lock.json` 和 `CHANGELOG.md`，运行 `uv lock`，
+同步更新 `pyproject.toml` 与 `package.json` 中的版本（例如 `0.1.0a5` 对应
+`0.1.0-alpha.5`）、`package-lock.json` 和 `CHANGELOG.md`，运行 `uv lock`，
 重新构建前端，再在干净的 `dist/` 目录中构建和检查产物。提交代码并创建对应版本的 Git 标签后发布。
 
 ```shell

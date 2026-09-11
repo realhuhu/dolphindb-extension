@@ -1,7 +1,7 @@
 import { LabIcon } from '@jupyterlab/ui-components';
 import { createElement, type IconNode, FileCode, Notebook, Eye, Table2, Play, Square,
   RefreshCw, Plus, Settings, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eraser, PanelRight,
-  Circle, CircleCheck, LoaderCircle } from 'lucide';
+  Circle, CircleCheck, LoaderCircle, ChevronLeft, SquareArrowOutUpRight, Ellipsis } from 'lucide';
 import connectionsSvg from '../style/icons/dolphindb-connections.svg';
 import dataExplorerSvg from '../style/icons/dolphindb-data-explorer.svg';
 
@@ -31,3 +31,6 @@ export const workspaceIcon = outline('show-workspace', PanelRight);
 export const readyIcon = outline('ready', CircleCheck);
 export const idleIcon = outline('idle', Circle);
 export const busyIcon = outline('busy', LoaderCircle);
+export const backIcon = outline('back', ChevronLeft);
+export const openIcon = outline('open', SquareArrowOutUpRight);
+export const moreIcon = outline('more', Ellipsis);

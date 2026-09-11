@@ -2,17 +2,19 @@ import type { IOutputAreaModel } from '@jupyterlab/outputarea';
 import type { IOutput, IMimeBundle } from '@jupyterlab/nbformat';
 import type { OutputEntry } from './model';
 import type { DisplayValue } from './runtime';
+import { DATA_MIME } from '../data/types';
 
 export const TABLE_MIME = 'application/vnd.dolphindb.table+json';
 
 /** Keep the typed table payload separate from HTML; the renderer escapes cell text. */
 export function resultData(value: DisplayValue): IMimeBundle {
+  if (value.browser) { return { 'text/plain': value.text ?? `${value.browser.initial.form} · ${value.browser.initial.count} 项`, [DATA_MIME]: value.browser as unknown as import('@lumino/coreutils').PartialJSONObject }; }
   if (!value.columns) { return { 'text/plain': value.text || '执行完成' }; }
   return {
     'text/plain': [value.columns.join('\t'), ...(value.rows ?? []).map(row => row.join('\t'))].join('\n'),
     [TABLE_MIME]: { columns: value.columns, rows: value.rows ?? [], totalRows: value.totalRows ?? value.rows?.length ?? 0,
       ...(value.sortRanks ? { sortRanks: value.sortRanks } : {}),
-      ...(value.totalColumns === undefined ? {} : { totalColumns: value.totalColumns }) },
+      ...(value.totalColumns === undefined ? {} : { totalColumns: value.totalColumns }), ...(value.columnTypes ? { columnTypes: value.columnTypes } : {}) },
   };
 }
 

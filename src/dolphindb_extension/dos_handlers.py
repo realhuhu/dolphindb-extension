@@ -8,7 +8,7 @@ from tornado import web
 from tornado.websocket import WebSocketHandler
 
 from .connections import ConnectionError
-from .dos_sessions import DOS_RESOURCE
+from .dos_sessions import DOS_RESOURCE, validated_history_options
 from .handlers import BaseHandler, connection_errors
 
 
@@ -32,7 +32,7 @@ class DosSessionsHandler(DosBaseHandler):
     @connection_errors
     async def post(self):
         data = self.body()
-        session = await self.manager.create(self.owner, data.get("path"), data.get("connectionId"))
+        session = await self.manager.create(self.owner, data.get("path"), data.get("connectionId"), data.get("history"))
         self.finish(session.summary())
 
 
@@ -48,7 +48,12 @@ class DosSessionHandler(DosBaseHandler):
     @authorized
     @connection_errors
     async def patch(self, session_id):
-        self.finish(await self.manager.rename(self.owner, session_id, self.body().get("path")))
+        data = self.body()
+        limits = validated_history_options(data["history"]) if "history" in data else None
+        result = await self.manager.rename(self.owner, session_id, data.get("path"))
+        if limits:
+            self.manager.find(self.owner, session_id).configure_history(*limits)
+        self.finish(result)
 
     @web.authenticated
     @authorized(action="execute")

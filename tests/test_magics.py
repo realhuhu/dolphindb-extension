@@ -78,16 +78,110 @@ def magic(monkeypatch):
     shell.history_manager.end_session()
 
 
-@pytest.mark.parametrize("value", [7, np.array([1, 2, 3]), pd.DataFrame({"id": [1, 2]}), None])
+@pytest.mark.parametrize("value", [7, 1.23456789, np.array([1, 2, 3]), pd.DataFrame({"id": [1, 2]}), {"a": [1, 2]}, None])
 def test_assignment_returns_original_sdk_object(magic, value):
     shell, instance, sessions = magic
+    native = shell.display_formatter.format(value)
     instance.execute("initialize")
     sessions[0].result = value
     result = shell.run_cell("aaa=%ddb select * from prices", store_history=False)
     assert result.success
     assert shell.user_ns["aaa"] is value
+    assert shell.display_formatter.format(shell.user_ns["aaa"]) == native
     assert sessions[0].calls[-1] == "select * from prices"
     assert len(sessions) == 1
+
+
+@pytest.mark.parametrize("code", ["%ddb prices", "%%ddb\nprices", "previous = 42\n%ddb prices"])
+def test_unassigned_magics_render_once_and_later_python_references_remain_native(magic, monkeypatch, code):
+    from dolphindb_extension.browser import SHOW_MIME
+
+    shell, instance, sessions = magic
+    instance.execute("initialize")
+    value = pd.DataFrame({"price": [1.23456789, 2.34567890]})
+    sessions[0].result = value
+    output = []
+    monkeypatch.setattr("IPython.display.display", lambda bundle, **kwargs: output.append(bundle))
+    with pd.option_context("display.precision", 2):
+        native = shell.display_formatter.format(value)
+        result = shell.run_cell(code, store_history=False)
+        assert result.success
+        assert shell.display_formatter.format(value) == native
+    assert len(output) == 1
+    target = output[0][SHOW_MIME]["target"]
+    calls = list(sessions[0].calls)
+    page = instance.metadata("browse", {"target": json.dumps(target),
+                                        "request": json.dumps({"path": [], "offset": 1, "limit": 1, "columnOffset": 0})})
+    assert page["grid"]["rows"][0] == ["1", "2.3456789"]
+    assert sessions[0].calls == calls
+
+
+@pytest.mark.parametrize("code", ["aaa = %ddb prices", "aaa = %ddb prices\naaa", "text = '%ddb prices'\ntext",
+                                 "%ddb prices\n42", "%%ddb -o captured\nprices"])
+def test_assignments_and_magic_looking_strings_never_trigger_custom_rendering(magic, monkeypatch, code):
+    shell, instance, sessions = magic
+    instance.execute("initialize")
+    value = pd.DataFrame({"price": [1.23456789]})
+    sessions[0].result = value
+    output = []
+    monkeypatch.setattr("IPython.display.display", lambda *args, **kwargs: output.append(args))
+    assert shell.run_cell(code, store_history=False).success
+    assert output == [] and not instance.browser.results
+
+
+@pytest.mark.parametrize("code", ["ddb_show(aaa)", "%ddb_show aaa", "from dolphindb_extension import ddb_show\nddb_show(aaa)"])
+def test_ddb_show_explicitly_renders_its_argument_without_running_or_changing_it(magic, monkeypatch, code):
+    from dolphindb_extension.browser import SHOW_MIME
+
+    shell, instance, sessions = magic
+    value = pd.DataFrame({"price": [1.23456789, 2.34567890]})
+    shell.user_ns["aaa"] = value
+    native = shell.display_formatter.format(value)
+    output = []
+    monkeypatch.setattr("IPython.get_ipython", lambda: shell)
+    monkeypatch.setattr("IPython.display.display", lambda bundle, **kwargs: output.append((bundle, kwargs)))
+    assert shell.run_cell(code, store_history=False).success
+    assert len(output) == 1 and output[0][1] == {"raw": True}
+    ticket = output[0][0][SHOW_MIME]
+    assert ticket["initial"]["form"] == "TABLE"
+    assert output[0][0]["text/plain"] == native[0]["text/plain"]
+    assert instance.browser.results[ticket["target"]["id"]] is value
+    assert shell.display_formatter.format(value) == native
+    assert shell.user_ns["aaa"] is value
+    assert not sessions and instance.session is None
+    page = instance.metadata("browse", {"target": json.dumps(ticket["target"]),
+                                        "request": json.dumps({"path": [], "offset": 1, "limit": 1, "columnOffset": 0})})
+    assert page["grid"]["rows"][0] == ["1", "2.3456789"]
+    assert not sessions
+
+
+@pytest.mark.parametrize("value, form", [(None, "SCALAR"), (object(), "SCALAR"), (np.array(42), "SCALAR"),
+                                        ([1, 2], "VECTOR"), ({"a": [1, 2]}, "DICT"),
+                                        ({"data": 1, "chartType": 2, "title": "ordinary dictionary"}, "DICT")])
+def test_ddb_show_accepts_ordinary_python_objects_without_ddb_provenance(magic, monkeypatch, value, form):
+    from dolphindb_extension.browser import SHOW_MIME
+
+    _, instance, sessions = magic
+    output = []
+    monkeypatch.setattr("IPython.display.display", lambda bundle, **kwargs: output.append(bundle))
+    instance.show(value)
+    assert output[0][SHOW_MIME]["initial"]["form"] == form
+    assert not sessions
+
+
+def test_ddb_show_preserves_user_names_and_unregisters_its_ast_hook(magic):
+    shell, instance, _ = magic
+    assert shell.user_ns["ddb_show"] is instance.show_function
+    assert shell.ast_transformers.count(instance.display_transformer) == 1
+    def user_function(value):
+        return value
+    shell.user_ns["ddb_show"] = user_function
+    unload_ipython_extension(shell)
+    assert shell.user_ns["ddb_show"] is user_function
+    assert instance.display_transformer not in shell.ast_transformers
+    load_ipython_extension(shell)
+    assert shell.user_ns["ddb_show"] is user_function
+    assert "ddb_show" in shell.magics_manager.magics["line"]
 
 
 def test_language_metadata_preview_does_not_lock_execution_connection(magic):
@@ -185,7 +279,7 @@ def test_cell_magic_captures_multiline_result_and_preserves_script(magic):
     assert result.result is None
     assert shell.user_ns["result"] is table
     assert sessions[0].calls[-1] == code
-    assert shell.run_cell("%%ddb\n1 + 1", store_history=False).result is table
+    assert shell.run_cell("%%ddb\n1 + 1", store_history=False).result is None
 
 
 def test_ddb_syntax_is_not_interpolated_by_ipython(magic):

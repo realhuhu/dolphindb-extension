@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/dolphindb/vscode-extension",
+  "commit": "bd726b584540d09a8f23b423b040c9f5ce728d61",
+  "source": "src/dataview/obj.tsx",
+  "sha256": "d6a0149865bfcc8b095a61cb810096d7bd3806eb880132e2d5b08822dfb7e0c3",
+  "extracted": [
+    "get_chart_option"
+  ],
+  "tableActions": {
+    "source": "src/commands.ts",
+    "functions": [
+      "table_action",
+      "get_clause"
+    ],
+    "sha256": "ba0a368697f35865e641782402349bdadccae237abb2ff2ea185452f19536de6",
+    "adaptation": "Jupyter cursor insertion and document-scoped schema reads"
+  },
+  "adaptations": [
+    "Jupyter theme color",
+    "replace xshell prototype helpers",
+    "empty/constant histogram data",
+    "zero-volume/empty candlestick data"
+  ]
+}

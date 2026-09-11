@@ -24,7 +24,7 @@ function kernel({ state = {}, language = 'python', bootstrap } = {}) {
       const comm = {
         sent: [], isDisposed: false, commsOverSubshells: 'perCommTarget', state: { ...initial },
         emit(state) { this.state = { ...this.state, ...state }; this.onMsg({ content: { data: this.state } }); },
-        open() { this.openedOn = this.commsOverSubshells; this.emit({}); },
+        open(data) { this.openedSettings = data.settings; this.openedOn = this.commsOverSubshells; this.emit({}); },
         send(message) {
           this.sent.push(message);
           if (message.kind === 'prepare') { this.emit({ configuring: true }); }
@@ -43,7 +43,7 @@ function kernel({ state = {}, language = 'python', bootstrap } = {}) {
 
 function fixture({ current = kernel(), request, timers = { setTimeout, clearTimeout } } = {}) {
   const requests = [];
-  const connections = { state: { connections: [profile('default'), profile('other')], activeId: 'default' }, changed: new Signal({}) };
+  const connections = { preferences: require('./preferences.cjs').preferences(), state: { connections: [profile('default'), profile('other')], activeId: 'default' }, changed: new Signal({}) };
   const context = { session: { kernel: current }, ready: Promise.resolve(), kernelChanged: new Signal({}), statusChanged: new Signal({}), connectionStatusChanged: new Signal({}) };
   const api = { request: async (path, method, body) => {
     requests.push({ path, method, body });
@@ -66,6 +66,12 @@ test('Python bootstrap uses no history and credentials only travel in a comm', a
   assert.equal(f.current.executions[0].silent, true);
   assert.equal(f.current.executions[0].store_history, false);
   assert.equal(f.current.comms[0].openedOn, 'disabled', 'DDB comms and cells must share the SDK session execution queue');
+  assert.equal(f.current.comms[0].openedSettings.dataBrowser.pageSize, 100);
+  f.connections.preferences.value.dataBrowser.pageSize = 25;
+  f.connections.changed.emit();
+  assert.equal(f.current.comms[0].sent.at(-1).kind, 'settings');
+  assert.equal(f.current.comms[0].sent.at(-1).settings.dataBrowser.pageSize, 25);
+  assert.ok(!JSON.stringify(f.current.comms[0].sent.at(-1)).includes('password'));
   assert.ok(!JSON.stringify(f.current.executions).includes('test-only-secret'));
   assert.ok(!JSON.stringify(f.model.profile).includes('test-only-secret'));
   assert.equal(f.current.comms[0].sent.find(m => m.kind === 'configure').profile.password, 'test-only-secret');
@@ -133,6 +139,23 @@ test('non-Python kernels receive no execution request or credentials', async () 
   assert.equal(f.current.executions.length, 0);
   assert.equal(f.requests.length, 0);
   f.model.dispose();
+});
+
+test('notebook browser identifies the owning DDB session and snapshots survive later executions', async () => {
+  for (const kind of ['variable', 'result']) {
+    const f = fixture({current:kernel({state:{profile:profile('default'),locked:true,browserOwner:'owner',sessionId:'first'}})}); await tick();
+    const pending=deferred(), value={form:'VECTOR',type:'INT',count:3};
+    const identity=f.model.browserIdentity();
+    f.model.metadata=()=>pending.promise;
+    const response=f.model.browse(kind==='result'?{kind,id:'saved'}:{kind,name:'v'},{path:[],offset:0,limit:100,columnOffset:0});
+    const check=kind==='variable'?assert.rejects(response,/变化/):response.then(page=>assert.equal(page,value));
+    f.model.languageRevision++;
+    assert.equal(f.model.browserIdentity(),identity);
+    pending.resolve(value); await check;
+    f.current.comms[0].emit({sessionId:'second'});
+    assert.notEqual(f.model.browserIdentity(),identity);
+    assert.equal(f.model.browserOwner,'owner'); f.model.dispose();
+  }
 });
 
 test('reopening during a pending selection completes the requested connection rather than the old one', async () => {
@@ -208,6 +231,24 @@ function metadataComm(f) {
     reply(result) { comm.onMsg({ content: { data: { kind: 'metadata', id: request.id, result } } }); }
   };
 }
+
+test('configured metadata timeout and request preferences reach the owning kernel', async () => {
+  const timers = clock(), f = fixture({ timers }); await tick();
+  f.connections.preferences.value.advanced.metadataTimeout = 12;
+  f.connections.preferences.value.preview.tableRows = 250;
+  const comm = f.current.comms[0];
+  let payload;
+  const done = deferred();
+  comm.send = message => { payload = message; return { done: done.promise, dispose() { done.reject(new Error('disposed')); } }; };
+  const pending = f.model.metadata('tablePreview', { database: 'dfs://test', table: 't' });
+  const rejected = assert.rejects(pending, /超时/);
+  assert.equal(payload.settings.preview.tableRows, 250);
+  timers.advance(11999); await tick();
+  assert.equal(f.model.metadataRequests.size, 1);
+  timers.advance(1); await rejected;
+  assert.equal(f.model.metadataRequests.size, 0);
+  f.model.dispose();
+});
 
 test('metadata timeout excludes time queued behind user cell execution', async () => {
   const timers = clock(), f = fixture({ timers }); await tick();

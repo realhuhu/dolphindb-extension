@@ -5,6 +5,9 @@ import type { ConnectionModel } from '../model';
 import type { DdbConnection } from '../upstream/connection';
 import { displayValue, executeInSession, loadDatabases, loadVariables, openSdk, previewConnection, tablePreview, tableSchema, variablePreview, type DatabaseEntry, type DisplayValue, type VariableEntry } from './runtime';
 import { OutputFolding } from './folding';
+import { snapshotTicket } from '../data/registry';
+import { remotePage } from '../data/sdk';
+import type { BrowseRequest, DataPage, DataTarget } from '../data/types';
 
 export interface SessionInfo {
   id: string; path: string; profile: Profile; locked: boolean; attached: boolean;
@@ -19,7 +22,7 @@ export interface OutputEntry {
 }
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/([?&]token=)[^&\s]+/g, '$1[redacted]');
 
-function restoreRun(run: SavedRun, sessionId: string): OutputEntry {
+function restoreRun(run: SavedRun, sessionId: string, path: string): OutputEntry {
   const output: OutputEntry = { id: `${sessionId}:${run.id}`, label: `执行 ${run.id} · 第 ${run.line} 行`, status: run.status, prints: [] };
   for (const frame of run.frames) {
     try {
@@ -29,7 +32,7 @@ function restoreRun(run: SavedRun, sessionId: string): OutputEntry {
       const first = data.indexOf(10), second = data.indexOf(10, first + 1);
       const status = decoder.decode(data.subarray(first + 1, second));
       if (status !== 'OK') { output.error = status; }
-      else { output.value = displayValue(DdbObj.parse(data.subarray(second + 1), decoder.decode(data.subarray(0, first)).split(' ')[2] !== '0')); }
+      else { const obj = DdbObj.parse(data.subarray(second + 1), decoder.decode(data.subarray(0, first)).split(' ')[2] !== '0'); output.value = { ...displayValue(obj), browser: snapshotTicket(obj, `${path.split('/').pop()} · ${output.label}`) }; }
     } catch { output.error = '此结果无法恢复，请查看后续输出。'; }
   }
   if (run.truncated) { output.prints.push('历史输出达到保存上限，部分内容已省略。'); }
@@ -45,12 +48,15 @@ export class DosModel {
   connection: DdbConnection | null = null;
   private preview: DdbConnection | null = null;
   private generation = 0;
+  private browseCache = new Map<string, DdbObj>();
+  private browseVersion = '';
   private selectedId: string | null = null;
   private followsDefault = true;
   private initializing: Promise<void> | null = null;
   private attaching: Promise<void> | null = null;
   private views = 0;
   private loadedHistory = -1;
+  private historyConfiguration = '';
   busy = false;
   loading = false;
   notice: string | null = null;
@@ -76,13 +82,24 @@ export class DosModel {
       : this.loading ? '连接中' : this.locked ? '会话就绪' : '尚未运行';
   }
   get sdk(): DdbConnection | null { return this.connection ?? this.preview; }
+  browserIdentity(): string { return `${this.profile?.id}:${this.session?.id ?? 'preview'}`; }
+
+  async browse(target: DataTarget, request: BrowseRequest): Promise<DataPage> {
+    const connection = this.sdk, generation = this.generation, execution = this.session?.executionCount, identity = this.browserIdentity();
+    if (!connection || this.executing || this.loading) { throw new Error('会话暂不可用，请等待执行完成。'); }
+    const version = `${generation}:${execution}:${request.revision ?? 0}`;
+    if (version !== this.browseVersion) { this.browseVersion = version; this.browseCache.clear(); }
+    const page = await remotePage(connection, target, request, this.browseCache);
+    if (connection !== this.sdk || generation !== this.generation || execution !== this.session?.executionCount || identity !== this.browserIdentity() || this.executing) { throw new Error('会话或数据已变化，请刷新。'); }
+    return page;
+  }
 
   async previewVariable(name: string): Promise<DisplayValue> {
     const connection = this.connection, sessionId = this.session?.id, executionCount = this.session?.executionCount, variables = this.variables;
     if (!this.locked || this.executing || !connection || !variables.some(variable => variable.name === name)) {
       throw new Error('变量预览暂不可用。');
     }
-    const value = await variablePreview(connection.ddb, name);
+    const value = await variablePreview(connection.ddb, name, this.manager.connections.preferences.value.advanced.variablePreviewBytes);
     if (this.connection !== connection || this.session?.id !== sessionId || this.session?.executionCount !== executionCount || this.variables !== variables || this.executing) {
       throw new Error('DDB 会话已变化。');
     }
@@ -106,6 +123,7 @@ export class DosModel {
     this.views = Math.max(0, this.views - 1);
     if (!this.views && !this.session) {
       this.generation++;
+      this.browseCache.clear();
       this.preview?.disconnect();
       this.preview = null;
       this.loading = false;
@@ -150,6 +168,7 @@ export class DosModel {
     // A cached document can follow default changes without holding a socket.
     if (!this.views || this.session || this.busy) { return; }
     const generation = ++this.generation;
+    this.browseCache.clear();
     this.preview?.disconnect();
     this.preview = null;
     this.databases = [];
@@ -185,10 +204,11 @@ export class DosModel {
     this.attaching = (async () => {
       this.loading = true;
       this.changed.emit();
+      await this.syncHistorySettings();
       const detail = await request<SessionInfo & { history: SavedRun[] }>(`dos-sessions/${session.id}`);
       this.session = detail;
       if (this.loadedHistory !== detail.executionCount) {
-        this.outputs = detail.history.map(run => restoreRun(run, session.id));
+        this.outputs = detail.history.map(run => restoreRun(run, session.id, this.path));
         this.loadedHistory = detail.executionCount;
       }
       if (detail.state === 'disconnected') { return; }
@@ -213,7 +233,9 @@ export class DosModel {
     this.generation++;
     this.preview?.disconnect();
     this.preview = null;
-    this.session = await request<SessionInfo>('dos-sessions', 'POST', { path: this.path, connectionId: profile.id });
+    const history = this.historySettings();
+    this.session = await request<SessionInfo>('dos-sessions', 'POST', { path: this.path, connectionId: profile.id, history });
+    this.historyConfiguration = `${this.session.id}:${JSON.stringify(history)}`;
     try {
       const ticket = await request<SessionTicket>(`dos-sessions/${this.session.id}/attach`, 'POST');
       this.connection = await openSdk(ticket, profile.name);
@@ -240,12 +262,14 @@ export class DosModel {
       session.locked = true;
       session.state = 'busy';
       output = { id: `${session.id}:${session.executionCount + 1}`, label: `执行 ${session.executionCount + 1} · 第 ${line + 1} 行`, status: 'running', prints: [] };
-      this.outputs = [...this.outputs.slice(-19), output];
+      const historyEntries = this.manager.connections.preferences.value.advanced.historyEntries;
+      this.outputs = [...this.outputs.slice(Math.max(0, this.outputs.length - historyEntries + 1)), output];
       this.changed.emit();
-      output.value = displayValue(await executeInSession(this.connection!, code, line, text => {
+      const result = await executeInSession(this.connection!, code, line, text => {
         if (output!.prints.join('\n').length < 200_000) { output!.prints.push(text); }
         this.changed.emit();
-      }));
+      });
+      output.value = { ...displayValue(result), browser: snapshotTicket(result, `${this.path.split('/').pop()} · ${output.label}`) };
       output.status = 'ok';
       success = true;
     } catch (error) {
@@ -291,9 +315,10 @@ export class DosModel {
     if (this.executing || !this.sdk) { return; }
     const connection = this.sdk;
     try {
-      const value = await tablePreview(connection, database, table);
+      const rows = this.manager.connections.preferences.value.preview.tableRows;
+      const value = await tablePreview(connection, database, table, rows);
       if (connection !== this.sdk) { return; }
-      this.previewReady.emit({ title: `${table} · 前 100 行`, value });
+      this.previewReady.emit({ title: `${table} · 前 ${rows} 行`, value });
     } catch (error) { this.notice = errorText(error); }
     this.changed.emit();
   }
@@ -325,8 +350,26 @@ export class DosModel {
     this.changed.emit();
   }
 
+  private historySettings() {
+    const { historyEntries, historyMegabytes } = this.manager.connections.preferences.value.advanced;
+    return { historyEntries, historyMegabytes };
+  }
+  private async syncHistorySettings(): Promise<void> {
+    if (!this.session) { return; }
+    const session = this.session, history = this.historySettings(), key = `${session.id}:${JSON.stringify(history)}`;
+    if (this.historyConfiguration === key) { return; }
+    await request(`dos-sessions/${session.id}`, 'PATCH', { path: this.path, history });
+    if (this.session?.id === session.id) {
+      this.historyConfiguration = key;
+      // Retain displayed objects and their MIME view state when only the
+      // history budget changes; replay is needed only for unseen executions.
+      this.outputs = this.outputs.slice(-history.historyEntries);
+    }
+  }
+
   reset(): void {
     this.generation++;
+    this.browseCache.clear();
     this.connection?.disconnect();
     this.preview?.disconnect();
     this.connection = this.preview = null;

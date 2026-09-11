@@ -7,6 +7,8 @@ import { Widget } from '@lumino/widgets';
 import type { OutputEntry } from './model';
 import type { DisplayValue } from './runtime';
 import { OutputAdapter, TABLE_MIME } from './output-model';
+import { useDecimals } from '../data/preferences';
+import { formatCell } from '../data/format';
 
 class DdbTableRenderer extends ReactWidget implements IRenderMime.IRenderer {
   private value: DisplayValue | null = null;
@@ -14,10 +16,11 @@ class DdbTableRenderer extends ReactWidget implements IRenderMime.IRenderer {
     const data = model.data[TABLE_MIME] as DisplayValue | undefined;
     this.value = data && Array.isArray(data.columns) && data.columns.every(column => typeof column === 'string')
       && Array.isArray(data.rows) && data.rows.every(row => Array.isArray(row) && row.every(cell => typeof cell === 'string'))
-      ? { columns: data.columns, rows: data.rows.slice(0, 100), totalRows: typeof data.totalRows === 'number' ? data.totalRows : data.rows.length,
+      ? { columns: data.columns, rows: data.rows.slice(0, 1000), totalRows: typeof data.totalRows === 'number' ? data.totalRows : data.rows.length,
+        columnTypes: Array.isArray(data.columnTypes) && data.columnTypes.every(type => typeof type === 'string') ? data.columnTypes : undefined,
         totalColumns: typeof data.totalColumns === 'number' ? data.totalColumns : undefined,
         sortRanks: Array.isArray(data.sortRanks) ? data.sortRanks.map(ranks =>
-          Array.isArray(ranks) && ranks.length === data.rows!.length && ranks.every(Number.isFinite) ? ranks.slice(0, 100) : null) : undefined } : null;
+          Array.isArray(ranks) && ranks.length === data.rows!.length && ranks.every(Number.isFinite) ? ranks.slice(0, 1000) : null) : undefined } : null;
     this.update();
     await this.renderPromise;
   }
@@ -30,10 +33,12 @@ class DdbTableRenderer extends ReactWidget implements IRenderMime.IRenderer {
 
 /** Shared by execution results, table dialogs and variable hover previews. */
 export function ResultTable({ value, showSummary = true }: { value: DisplayValue; showSummary?: boolean }): React.ReactElement {
+    const decimals = useDecimals();
+    const display = (text: string, index: number) => formatCell(text, value.columnTypes?.[index] ?? '', decimals);
     return <div className="ddb-result-grid">
       <Table rows={value.rows!.map((cells, index) => ({ key: String(index), data: { cells, index } }))}
         columns={value.columns!.map((name, index) => ({ id: String(index), label: name,
-          renderCell: (row: { cells: string[] }) => <span title={row.cells[index]}>{row.cells[index]}</span>,
+          renderCell: (row: { cells: string[] }) => <span title={row.cells[index]}>{display(row.cells[index], index)}</span>,
           sort: (a: { cells: string[]; index: number }, b: { cells: string[]; index: number }) => {
             const ranks = value.sortRanks?.[index];
             return ranks ? ranks[a.index] - ranks[b.index] : (a.cells[index] ?? '').localeCompare(b.cells[index] ?? '');

@@ -13,6 +13,9 @@ import { VariablesContent } from '../session/variables-view';
 import { formatBytes, totalBytes } from '../session/variables';
 import { useWorkspaceHover, WorkspaceTooltip, type WorkspaceHover } from '../session/hover';
 import { schemaDisplayValue } from '../session/schema';
+import { ActionsButton, openActions, type MenuAction } from '../session/menu';
+import { TABLE_ACTIONS, tableDefinition, tableStatement } from '../session/table-actions';
+import { usePreferences } from '../data/preferences';
 import { runIcon, stopIcon, refreshIcon, clearIcon, tableIcon, previewIcon, caretDownIcon, caretRightIcon, collapseAllIcon, expandAllIcon } from '../icons';
 
 function useModel(model: Pick<WorkspaceModel, 'changed'>): void {
@@ -22,16 +25,18 @@ function useModel(model: Pick<WorkspaceModel, 'changed'>): void {
 
 export function OutputPanel({ model, rendermime }: { model: DosModel; rendermime: IRenderMimeRegistry }): React.ReactElement {
   useModel(model);
+  const { output: preferences } = usePreferences();
   const region = React.useRef<HTMLElement>(null);
   const following = React.useRef(false);
   const latest = model.outputs.at(-1);
   const folding = model.folding;
+  folding.setDefault(preferences.defaultExpanded);
   folding.retain(model.outputs.map(output => output.id));
   React.useLayoutEffect(() => {
     const parent = region.current?.parentElement;
-    following.current = !folding.collapsed && Boolean(latest && folding.expanded(latest.id));
+    following.current = preferences.autoScroll && !folding.collapsed && Boolean(latest && folding.expanded(latest.id));
     if (parent && following.current) { parent.scrollTop = parent.scrollHeight; }
-  }, [model.outputs.length, latest?.id, latest?.prints.length, latest?.value, latest?.error, latest?.status, folding.collapsed]);
+  }, [model.outputs.length, latest?.id, latest?.prints.length, latest?.value, latest?.error, latest?.status, folding.collapsed, preferences.autoScroll]);
   React.useLayoutEffect(() => {
     const parent = region.current?.parentElement;
     if (!parent) { return; }
@@ -39,7 +44,7 @@ export function OutputPanel({ model, rendermime }: { model: DosModel; rendermime
     // Inactive document tabs have no layout yet; follow restored output once revealed.
     const observer = new ResizeObserver(() => {
       const nextVisible = parent.clientWidth > 0 && parent.clientHeight > 0;
-      if (nextVisible && !visible && !model.folding.collapsed) { following.current = Boolean(model.outputs.at(-1) && model.folding.expanded(model.outputs.at(-1)!.id)); }
+      if (nextVisible && !visible && !model.folding.collapsed) { following.current = preferences.autoScroll && Boolean(model.outputs.at(-1) && model.folding.expanded(model.outputs.at(-1)!.id)); }
       visible = nextVisible;
       if (following.current && visible && !model.folding.collapsed && model.outputs.length) { parent.scrollTop = parent.scrollHeight; }
     });
@@ -47,10 +52,10 @@ export function OutputPanel({ model, rendermime }: { model: DosModel; rendermime
     // MIME renderers finish asynchronously, after the enclosing React render.
     observer.observe(region.current!);
     return () => observer.disconnect();
-  }, [model]);
+  }, [model, preferences.autoScroll]);
   const setAll = (expanded: boolean) => { following.current = false; folding.setAll(expanded); model.changed.emit(); };
   return <section ref={region} className="ddb-output" aria-label={`执行结果 ${model.path}`}>
-    <ReactToolbar className="ddb-output-toolbar" aria-label="执行结果工具栏">
+    <ReactToolbar className="jp-Toolbar ddb-output-toolbar" aria-label="执行结果工具栏">
       <ToolbarButtonComponent icon={folding.collapsed ? caretRightIcon : caretDownIcon} label="执行结果"
         tooltip={folding.collapsed ? '展开执行结果面板' : '收起执行结果面板'} aria-expanded={!folding.collapsed}
         onClick={() => { following.current = false; folding.collapsed = !folding.collapsed; model.changed.emit(); }}/>
@@ -105,21 +110,39 @@ function WorkspaceHeader({ model, path, scope }: WorkspaceBinding): React.ReactE
 type Schedule = (key: string, action: () => void | Promise<void>) => void;
 type TableReference = { database: string; table: string };
 
-function DatabaseItem({ database, binding: { model, captureInsertion }, schedule, schema }: {
+function DatabaseItem({ database, binding, schedule, schema }: {
   database: WorkspaceModel['databases'][number]; binding: WorkspaceBinding; schedule: Schedule; schema: WorkspaceHover<TableReference>;
 }): React.ReactElement {
+  const { model, captureInsertion, openData } = binding;
+  const { preview: previewSettings } = usePreferences();
   const [expanded, setExpanded] = React.useState(false);
+  const databaseActions = () => [{ label: '查看数据库完整结构', run: () => openData?.({ kind: 'database-schema', database: database.path }, `${database.catalog ?? database.path} · 结构`) }];
   const toggle = () => { schema.dismiss(); setExpanded(value => !value); };
   return <TreeItem expanded={expanded} className="jp-TreeItem ddb-database" aria-label={database.path} title={database.path}
+    onContextMenu={event => { event.preventDefault(); event.stopPropagation(); openActions(databaseActions(), event.clientX, event.clientY); }}
     onExpand={event => { if (event.target === event.currentTarget) { setExpanded((event.target as TreeItemElement).expanded); } }}
     onKeyDown={event => { if (event.target === event.currentTarget && event.key === 'Enter') { event.preventDefault(); toggle(); } }}>
     <caretRightIcon.react slot="expand-collapse-glyph" className="ddb-tree-chevron" width="12px" height="12px"/>
-    <span className="ddb-database-name" onClick={toggle}>{database.catalog ?? database.path}</span><span slot="end">{database.tables.length}</span>
+    <span className="ddb-database-name" onClick={toggle}>{database.catalog ?? database.path}</span><span slot="end" className="ddb-tree-actions"><span>{database.tables.length}</span><ActionsButton title="数据库操作" actions={databaseActions} enabled={!model.executing}/></span>
     {database.tables.map(table => {
       const reference = { database: database.path, table };
       const preview = () => { schema.dismiss(); if (!model.executing) { schedule('table-preview', () => model.inspectTable(database.path, table)); } };
       const insert = () => { schema.dismiss(); const action = captureInsertion(loadTableExpression(database.path, table)); if (action) { schedule('insert-table', action); } };
+      const actions = (): MenuAction[] => [
+        { label: '在数据浏览器查看完整表', run: () => openData?.({ kind: 'table', database: database.path, table }, table) },
+        { label: '查看表完整结构', run: () => openData?.({ kind: 'schema', database: database.path, table }, `${table} · 结构`) },
+        ...TABLE_ACTIONS.map(action => {
+          let statement = '';
+          const apply = captureInsertion(() => statement);
+          return { label: `插入 ${action === 'load' ? 'loadTable' : action} 语句`, run: () => schedule('table-statement', async () => {
+            if (!apply || !binding.isCurrent()) { return; }
+            const definition = ['select', 'update', 'delete'].includes(action) ? await tableDefinition(model, database.path, table) : undefined;
+            statement = tableStatement(action, database.path, table, definition, database.catalog); apply();
+          }) };
+        }),
+      ];
       return <TreeItem key={table} className="jp-TreeItem ddb-table-item" aria-label={table} title=""
+        onContextMenu={event => { event.preventDefault(); event.stopPropagation(); schema.dismiss(); openActions(actions(), event.clientX, event.clientY); }}
         aria-describedby={schema.hover?.item.database === database.path && schema.hover.item.table === table ? schema.id : undefined}
         onFocus={event => { if (event.target === event.currentTarget) { schema.enter(reference, event.currentTarget); } }} onBlur={schema.leave}
         onMouseDown={event => { if (event.button === 0) { event.preventDefault(); } }} onClick={insert}
@@ -127,7 +150,8 @@ function DatabaseItem({ database, binding: { model, captureInsertion }, schedule
         <tableIcon.react slot="start" elementSize="normal"/><span className="ddb-table-name"
           onMouseEnter={event => schema.enter(reference, event.currentTarget)} onMouseLeave={schema.leave}>{table}</span>
         <span slot="end" className="ddb-table-preview-action" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
-          <ToolbarButtonComponent icon={previewIcon} tooltip={`预览 ${table} · 前 100 行`} enabled={!model.executing} onClick={preview}/>
+          <ActionsButton title={`${table} · 更多操作`} actions={actions} enabled={!model.executing}/>
+          <ToolbarButtonComponent icon={previewIcon} tooltip={`预览 ${table} · 前 ${previewSettings.tableRows} 行`} enabled={!model.executing} onClick={preview}/>
         </span>
       </TreeItem>;
     })}
@@ -137,7 +161,9 @@ function DatabaseItem({ database, binding: { model, captureInsertion }, schedule
 
 function DatabaseContent({ binding, schedule, viewport }: { binding: WorkspaceBinding; schedule: Schedule; viewport: HTMLElement }): React.ReactElement {
   const { model } = binding;
+  const preferences = usePreferences();
   const schema = useWorkspaceHover<TableReference>(binding, {
+    enabled: preferences.preview.tableHover,
     snapshot: () => model.databases, key: ({ database, table }) => JSON.stringify([database, table]),
     read: async ({ database, table }) => schemaDisplayValue(await model.previewTableSchema(database, table)),
     error: '无法读取表结构，表可能已变化或当前账号没有权限。请刷新后重试。',

@@ -17,6 +17,18 @@ vm.runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../fro
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, folding);
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('global folding defaults affect only new records and preserve document overrides', () => {
+  const state = new folding.exports.OutputFolding();
+  state.retain(['one']);
+  state.setDefault(false); state.retain(['one', 'two']);
+  assert.equal(state.expanded('one'), true);
+  assert.equal(state.expanded('two'), false);
+  state.setExpanded('two', true); state.setDefault(true);
+  assert.equal(state.expanded('two'), true);
+  state.setAll(false); state.setDefault(true); state.retain(['one', 'two', 'three']);
+  assert.equal(state.expanded('three'), false, 'collapse all remains the document preference');
+});
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -25,10 +37,11 @@ function deferred() {
 function profile(id, name) {
   return { id, name, host: 'localhost', port: 8848, username: 'user', ssl: false, timeout: 10, rememberPassword: false, hasPassword: false };
 }
-function fixture({ sessions = [], metadata = async () => [], connect, connectionReady = Promise.resolve(), tablePreview = async () => ({ kind: 'table', columns: [], rows: [] }), variablePreview = async () => ({ text: '42' }), tableSchema = async () => ({ columns: [], rows: [] }) } = {}) {
+function fixture({ sessions = [], metadata = async () => [], connect, connectionReady = Promise.resolve(), tablePreview = async () => ({ kind: 'table', columns: [], rows: [] }), variablePreview = async () => ({ text: '42' }), tableSchema = async () => ({ columns: [], rows: [] }), browse = async () => ({ form: 'VECTOR', type: 'INT', count: 0 }) } = {}) {
   const profiles = [profile('default', 'Default'), profile('other', 'Other')];
   const previews = [], requests = [], attachments = [];
   const connections = {
+    preferences: require('./preferences.cjs').preferences(),
     state: { connections: profiles, activeId: 'default' },
     changed: new Signal({}), refresh: async () => { await connectionReady; },
   };
@@ -57,7 +70,8 @@ function fixture({ sessions = [], metadata = async () => [], connect, connection
     assert.ok(session, `Unexpected API path: ${path}`);
     return path.endsWith('/attach') ? { path: `${path}/ws` } : { ...session, history: [] };
   } };
-  const modules = { '@lumino/signaling': { Signal }, 'dolphindb/browser.js': {}, '../api': api, './runtime': runtime, './folding': folding.exports };
+  const modules = { '@lumino/signaling': { Signal }, 'dolphindb/browser.js': {}, '../api': api, './runtime': runtime, './folding': folding.exports,
+    '../data/registry': { snapshotTicket: () => undefined }, '../data/sdk': { remotePage: browse } };
   const sandbox = {
     exports: {}, require: id => {
       assert.ok(Object.hasOwn(modules, id), `Unexpected model import: ${id}`);
@@ -98,13 +112,30 @@ test('table preview opens a dialog signal without adding output or locking the c
   const model = f.manager.document('table.dos'); model.open(); await model.initialize();
   const previews = []; model.previewReady.connect((_sender, result) => previews.push(result));
   await model.inspectTable('dfs://test', 'prices');
-  assert.deepEqual(calls, [['dfs://test', 'prices']]);
+  assert.deepEqual(calls, [['dfs://test', 'prices', 100]]);
+  f.connections.preferences.value.preview.tableRows = 250;
+  await model.inspectTable('dfs://test', 'prices');
+  assert.deepEqual(calls[1], ['dfs://test', 'prices', 250]);
+  assert.equal(previews[1].title, 'prices · 前 250 行');
   assert.equal(previews[0].value, value);
   assert.equal(model.outputs.length, 0); assert.equal(model.locked, false);
   model.folding.collapsed = true;
   model.closeView(); model.open(); await model.initialize();
   assert.equal(model.folding.collapsed, true, 'reopening the editor preserves its fold preference');
   model.closeView();
+});
+
+test('changing history limits retains the MIME objects and view state of displayed runs', async () => {
+  const session = { id: 'saved', path: 'history.dos', profile: profile('default', 'Default'), locked: true, attached: false, state: 'idle', executionCount: 3 };
+  const f = fixture({ sessions: [session] }); await f.manager.ready;
+  const model = f.manager.document('history.dos'); model.session = session; model.loadedHistory = 3;
+  const outputs = [1, 2, 3].map(id => ({ id: `saved:${id}`, status: 'ok', prints: [], value: { text: String(id) } }));
+  model.outputs = outputs;
+  f.connections.preferences.value.advanced.historyEntries = 2;
+  await model.restore(true);
+  assert.equal(model.outputs.length, 2);
+  assert.equal(model.outputs[0], outputs[1]);
+  assert.equal(model.outputs[1].value, outputs[2].value, 'a settings change must not recreate existing MIME renderers');
 });
 
 test('a delayed table preview from a previous connection cannot open a dialog', async () => {
@@ -115,6 +146,19 @@ test('a delayed table preview from a previous connection cannot open a dialog', 
   const request = model.inspectTable('dfs://test', 'prices');
   await model.select('other'); pending.resolve({}); await request;
   assert.equal(previews, 0); model.closeView();
+});
+
+test('a live data browser rejects replies from a replaced or newly executing DOS session', async () => {
+  for (const change of ['session', 'execution']) {
+    const pending = deferred(), session = { id: 'saved', path: 'browse.dos', profile: profile('default', 'Default'), locked: true, state: 'idle', executionCount: 1 };
+    const f = fixture({ sessions: [session], browse: () => pending.promise }); await f.manager.ready;
+    const model = f.manager.document(session.path); model.open(); await model.initialize();
+    const identity = model.browserIdentity();
+    const response = assert.rejects(model.browse({kind:'variable',name:'prices'},{path:[],offset:0,limit:100,columnOffset:0}), /变化/);
+    model.session = change === 'session' ? {...session,id:'replaced'} : {...session,executionCount:2};
+    assert.equal(model.browserIdentity() === identity, change === 'execution');
+    pending.resolve({form:'TABLE',type:'TABLE',count:1}); await response; model.closeView();
+  }
 });
 
 test('table schema hover uses the selected preview without locking or adding execution results', async () => {

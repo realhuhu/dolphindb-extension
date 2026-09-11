@@ -34,6 +34,7 @@ jobs:
         run: |
           uv run --extra notebook python scripts/sync_upstream.py --check
           uv run --extra notebook python scripts/sync_language.py --check
+          uv run --extra notebook python scripts/sync_dataview.py --check
       - name: Build frontend from locked dependencies
         run: |
           npm ci

@@ -15,6 +15,7 @@ import notebookExecutorPlugin from './notebook/executor-plugin';
 import languagePlugin from './language/plugin';
 import workspacePlugin from './session/workspace';
 import { connectionsIcon } from './icons';
+import dataBrowserPlugin from './data/plugin';
 
 export { IConnectionModel } from './tokens';
 export { IExtensionSettings, SETTINGS_ID } from './settings';
@@ -99,4 +100,4 @@ const plugin: JupyterFrontEndPlugin<ConnectionModel> = {
   },
 };
 
-export default [settingsPlugin, plugin, languagePlugin, workspacePlugin, dosPlugin, notebookExecutorPlugin, notebookPlugin];
+export default [settingsPlugin, plugin, languagePlugin, dataBrowserPlugin, workspacePlugin, dosPlugin, notebookExecutorPlugin, notebookPlugin];

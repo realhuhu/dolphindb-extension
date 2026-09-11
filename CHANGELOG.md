@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0a5 - 2026-09-11
+
+- Expose browser pagination defaults, table/hover previews, output scrolling/folding, batch error policy, editor assistance toggles, connection address visibility and automatic workspace opening in Settings Editor.
+- Apply validated preview/cache/history budgets and Notebook metadata timeouts to their owning browser, Python kernel and DOS session; retain manual view state and support changes within existing sessions.
+- Add a shared DOS/Notebook data browser with independent Jupyter tabs, row/column pagination, nested dictionary/ANY/array-vector navigation, matrix labels and tensor slicing.
+- Reuse the upstream chart option builder for line, column, bar, area, pie, scatter, histogram and candlestick charts; add Plotly surface rendering, zoom, image export and theme integration.
+- Browse complete database/table schemas, including column definitions, partition schemes, sort keys and storage attributes.
+- Generate select/update/delete/truncate/loadTable/schema templates from table menus, using actual partition columns and preserving the original document/cursor without executing code.
+- Add persistent numeric display precision to Settings Editor, applied live to results, data browsers, charts and variable previews; preserve exact large integers, decimals and sorting values.
+- Use IPython's native magic transformation and AST hook to render a cell's final expression only when it directly calls `%ddb` / `%%ddb`; preserve assigned return objects and normal Python output. Add `ddb_show(value)` / `%ddb_show value` for arbitrary Python objects, without global display formatters.
+- Cover paging, array-vector row selection, nested schemas, tensors, chart conversion, precision, saved MIME validation, cache eviction and document/session ownership.
+- Use SQL for DFS row counts, row/column pagination and column-cell navigation in both SDKs; retain pandas indexes when browsing DataFrames and Series.
+- Preserve a manually collapsed workspace sidebar, align native toolbar controls, and contain sticky table headers within their result panels.
+
 ## 0.1.0a4 - 2026-09-11
 
 - Insert `loadTable(...)` at the editor cursor when a database table is clicked; provide a separate preview button for its first 100 rows and a hover preview of its column definitions.

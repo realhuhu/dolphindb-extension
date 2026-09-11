@@ -47,7 +47,7 @@ export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionMo
   return <section className="ddb-panel" aria-label="DolphinDB 连接管理" aria-busy={Boolean(model.busy)}>
     <header className="ddb-header">
       <div className="ddb-brand"><span className="ddb-brand-mark"><DatabaseMark /></span><div><strong>DolphinDB</strong><span>CONNECTIONS</span></div></div>
-      {!editing && <Toolbar aria-label="连接管理工具栏">
+      {!editing && <Toolbar className="jp-Toolbar ddb-connection-toolbar" aria-label="连接管理工具栏">
         <ToolbarButtonComponent icon={settingsIcon} tooltip="打开 DolphinDB 设置" onClick={onOpenSettings}/>
         <ToolbarButtonComponent icon={refreshIcon} tooltip="刷新连接列表" enabled={!model.busy} onClick={() => void model.refresh()}/>
         <ToolbarButtonComponent icon={addIcon} tooltip="新增连接" enabled={!model.busy} onClick={() => edit('new')}/>
@@ -74,7 +74,7 @@ export function ConnectionPanel({ model, onOpenSettings }: { model: ConnectionMo
           const connecting = model.busy === `connect:${profile.id}`;
           return <article className={`ddb-connection ${selected ? 'is-selected' : ''}`} key={profile.id} aria-label={`连接 ${profile.name}`}>
             <div className="ddb-connection-title"><h3>{profile.name}</h3>{selected && <span className="ddb-badge">当前</span>}</div>
-            <code className="ddb-endpoint">{endpoint(profile)}</code>
+            {sidebar.showConnectionAddress && <code className="ddb-endpoint">{endpoint(profile)}</code>}
             {sidebar.showConnectionDetails && <div className="ddb-connection-meta"><span>{profile.username || '匿名用户'}</span><span>{profile.ssl ? 'SSL' : '标准连接'}</span></div>}
             <div className="ddb-connection-actions">
               <Button disabled={Boolean(model.busy) || selected} onClick={() => void model.connect(profile)}>{connecting ? '连接中…' : selected ? '✓ 已连接' : model.connected ? '切换连接' : '连接'}</Button>

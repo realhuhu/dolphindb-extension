@@ -324,7 +324,7 @@ test('notebook languages bind before editor rendering and survive kernel languag
     contentHeader: { addWidget() {} }, disposed: signal(), isDisposed: false,
   };
   const connections = { loaded: true };
-  const model = { previewReady: signal() };
+  const model = { previewReady: signal(), changed: signal() };
   const bound = [], unbound = [];
   const languageEditors = { bind: model => { bound.push(model); return () => unbound.push(model); } };
   const modules = {

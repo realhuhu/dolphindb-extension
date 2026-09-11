@@ -5,8 +5,9 @@ type SortValue = string | number | bigint | boolean | null;
 /** Keep ordering next to the typed data, before formatting or JSON transport.
  * SQL table widgets likewise sort data in the query/data layer, not its HTML.
  */
-export function columnSortRanks(column: DdbVectorObj, count: number): number[] {
-  const values: SortValue[] = Array.from({ length: count }, (_, index) => {
+export function columnSortRanks(column: DdbVectorObj, count: number, offset = 0): number[] {
+  const values: SortValue[] = Array.from({ length: count }, (_, position) => {
+    const index = position + offset;
     const { type, value, le } = column;
     if (type === DdbType.decimal32 || type === DdbType.decimal64 || type === DdbType.decimal128) {
       const data = (value as DdbDecimalVectorValue).data;
