@@ -3,7 +3,7 @@
 将 [DolphinDB VS Code 插件](https://github.com/dolphindb/vscode-extension) 的能力迁移到 Jupyter，
 支持 DolphinDB 脚本开发和 Notebook 中的 DDB 代码执行。
 
-**当前版本为 `0.1.0a5`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
+**当前版本为 `0.1.0a6`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
 DolphinDB 连接，查看当前连接、节点名称和服务器版本；提供 Settings Editor、DOS 编辑与独立会话，以及 Notebook 中的
 `%ddb` / `%%ddb` 执行和 Python 返回值赋值，并在这些编辑区域复用上游语言服务。
 
@@ -344,7 +344,7 @@ Python 包已包含预构建前端，安装使用时无需 Node.js。
 使用 `notebook` 可选依赖同时安装 Notebook magic 所需的 DolphinDB Python SDK 与 IPython：
 
 ```shell
-pip install "dolphindb-extension[notebook]==0.1.0a5"
+pip install "dolphindb-extension[notebook]==0.1.0a6"
 ```
 
 仅使用 DOS 编辑器和连接管理时，可以省略 `[notebook]`。
@@ -415,8 +415,8 @@ CodeMirror 和 Jupyter 编辑器扩展注册接口展示提示，无需启动 No
 
 ## 发布
 
-同步更新 `pyproject.toml` 与 `package.json` 中的版本（例如 `0.1.0a5` 对应
-`0.1.0-alpha.5`）、`package-lock.json` 和 `CHANGELOG.md`，运行 `uv lock`，
+同步更新 `pyproject.toml` 与 `package.json` 中的版本（例如 `0.1.0a6` 对应
+`0.1.0-alpha.6`）、`package-lock.json` 和 `CHANGELOG.md`，运行 `uv lock`，
 重新构建前端，再在干净的 `dist/` 目录中构建和检查产物。提交代码并创建对应版本的 Git 标签后发布。
 
 ```shell

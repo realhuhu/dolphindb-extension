@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0a5 - 2026-09-11
+## 0.1.0a6 - 2026-09-11
 
 - Expose browser pagination defaults, table/hover previews, output scrolling/folding, batch error policy, editor assistance toggles, connection address visibility and automatic workspace opening in Settings Editor.
 - Apply validated preview/cache/history budgets and Notebook metadata timeouts to their owning browser, Python kernel and DOS session; retain manual view state and support changes within existing sessions.
@@ -13,6 +13,7 @@
 - Cover paging, array-vector row selection, nested schemas, tensors, chart conversion, precision, saved MIME validation, cache eviction and document/session ownership.
 - Use SQL for DFS row counts, row/column pagination and column-cell navigation in both SDKs; retain pandas indexes when browsing DataFrames and Series.
 - Preserve a manually collapsed workspace sidebar, align native toolbar controls, and contain sticky table headers within their result panels.
+- Normalize upstream chart and table-action source hashes across Windows and Linux checkouts.
 
 ## 0.1.0a4 - 2026-09-11
 

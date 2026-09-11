@@ -1,6 +1,6 @@
 {
   "name": "dolphindb-extension",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "description": "Visual DolphinDB connection management for Jupyter",
   "license": "Apache-2.0",
   "private": true,

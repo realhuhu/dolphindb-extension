@@ -31,10 +31,10 @@ def sync(check=False):
               "type ChartConfig = any;\n\n")
     provenance = {"repository": "https://github.com/dolphindb/vscode-extension",
                   "commit": subprocess.check_output(["git", "-C", str(source.parents[2]), "rev-parse", "HEAD"], text=True).strip(),
-                  "source": "src/dataview/obj.tsx", "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                  "source": "src/dataview/obj.tsx", "sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
                   "extracted": ["get_chart_option"],
                   "tableActions": {"source": "src/commands.ts", "functions": ["table_action", "get_clause"],
-                                   "sha256": hashlib.sha256((ROOT / "upstream/vscode-extension/src/commands.ts").read_bytes()).hexdigest(),
+                                   "sha256": hashlib.sha256((ROOT / "upstream/vscode-extension/src/commands.ts").read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
                                    "adaptation": "Jupyter cursor insertion and document-scoped schema reads"},
                   "adaptations": ["Jupyter theme color", "replace xshell prototype helpers", "empty/constant histogram data", "zero-volume/empty candlestick data"]}
     outputs = {"charts.ts": header + code + "\n", "dataview-provenance.json": json.dumps(provenance, indent=2) + "\n"}
