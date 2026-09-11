@@ -58,6 +58,8 @@ export class DosModel {
   private loadedHistory = -1;
   private historyConfiguration = '';
   busy = false;
+  private debugActive = false;
+  private debugProfile: Profile | undefined;
   loading = false;
   notice: string | null = null;
   databaseError: string | null = null;
@@ -69,16 +71,23 @@ export class DosModel {
 
   constructor(public path: string, readonly manager: DosManager) {}
 
+  get debugging(): boolean { return this.debugActive; }
+  set debugging(value: boolean) {
+    if (value && !this.debugActive) { this.debugProfile = this.profile ? { ...this.profile } : undefined; }
+    this.debugActive = value;
+    if (!value) { this.debugProfile = undefined; }
+  }
+
   get locked(): boolean { return Boolean(this.session?.locked); }
   get profile(): Profile | undefined {
-    return this.session?.profile ?? (this.followsDefault ? this.manager.defaultProfile
+    return this.debugProfile ?? this.session?.profile ?? (this.followsDefault ? this.manager.defaultProfile
       : this.manager.connections.state.connections.find(p => p.id === this.selectedId));
   }
   get executing(): boolean { return this.busy || this.session?.state === 'busy'; }
   get panelLoading(): boolean { return this.loading; }
-  get selection(): string { return this.followsDefault && !this.session ? '' : this.profile?.id ?? ''; }
+  get selection(): string { return this.followsDefault && !this.session && !this.debugging ? '' : this.profile?.id ?? ''; }
   get status(): string {
-    return this.executing ? '运行中' : this.session?.state === 'disconnected' ? '已断开'
+    return this.debugging ? '调试中' : this.executing ? '运行中' : this.session?.state === 'disconnected' ? '已断开'
       : this.loading ? '连接中' : this.locked ? '会话就绪' : '尚未运行';
   }
   get sdk(): DdbConnection | null { return this.connection ?? this.preview; }
@@ -143,7 +152,7 @@ export class DosModel {
   }
 
   async useDefault(): Promise<void> {
-    if (!this.followsDefault || this.session || this.busy) { return; }
+    if (!this.followsDefault || this.session || this.busy || this.debugging) { return; }
     const id = this.manager.defaultProfile?.id ?? null;
     if (id !== this.selectedId || (!this.preview && !this.loading)) {
       this.selectedId = id;
@@ -152,6 +161,7 @@ export class DosModel {
   }
 
   async select(id: string): Promise<void> {
+    if (this.debugging) { throw new Error('调试期间不能切换连接，请先停止调试。'); }
     if (this.locked || this.busy || this.session) { throw new Error('首次运行后连接已固定，请先关闭会话。'); }
     this.selectedId = id || null;
     this.followsDefault = !id;
@@ -159,14 +169,14 @@ export class DosModel {
   }
 
   async closeSession(): Promise<void> {
-    if (!this.session || this.executing || this.loading) { return; }
+    if (!this.session || this.executing || this.loading || this.debugging) { return; }
     try { await this.manager.shutdown(this.session.id); }
     catch (error) { this.notice = errorText(error); this.changed.emit(); }
   }
 
   async loadPreview(): Promise<void> {
     // A cached document can follow default changes without holding a socket.
-    if (!this.views || this.session || this.busy) { return; }
+    if (!this.views || this.session || this.busy || this.debugging) { return; }
     const generation = ++this.generation;
     this.browseCache.clear();
     this.preview?.disconnect();
@@ -246,6 +256,7 @@ export class DosModel {
   }
 
   async run(code: string, line = 0): Promise<boolean> {
+    if (this.debugging) { this.notice = '此文件正在调试，请先停止调试。'; this.changed.emit(); return false; }
     if (!code.trim()) { return true; }
     if (this.executing || this.pathError) { this.notice = '此文件正在运行或路径尚未同步，请稍后重试。'; this.changed.emit(); return false; }
     await this.initialize();

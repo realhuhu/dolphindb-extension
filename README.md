@@ -3,9 +3,9 @@
 将 [DolphinDB VS Code 插件](https://github.com/dolphindb/vscode-extension) 的能力迁移到 Jupyter，
 支持 DolphinDB 脚本开发和 Notebook 中的 DDB 代码执行。
 
-**当前版本为 `0.1.0a6`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
+**当前版本为 `0.1.0a7`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
 DolphinDB 连接，查看当前连接、节点名称和服务器版本；提供 Settings Editor、DOS 编辑与独立会话，以及 Notebook 中的
-`%ddb` / `%%ddb` 执行和 Python 返回值赋值，并在这些编辑区域复用上游语言服务。
+`%ddb` / `%%ddb` 执行和 Python 返回值赋值，并在这些编辑区域复用上游语言服务；DOS 支持断点与单步调试。
 
 ## 可视化配置连接
 
@@ -86,6 +86,31 @@ JSON 用户覆盖示例（未列出的字段继续使用默认值）：
 类型、默认值解析和变更信号。后续执行、编辑器或结果展示插件可依赖 `IExtensionSettings`
 服务，新增配置时按功能增加 schema 分组和对应类型，再订阅 `changed` 更新界面。
 保持已有字段及插件 ID `dolphindb-extension:settings` 稳定，以保留用户配置。
+
+## DOS 调试
+
+**DolphinDB 调试（仅 DOS）** 按钮默认位于右侧“数据库与变量”按钮下方，使用 D + 虫子图标；`.ipynb` 不提供此调试入口。
+调试复用官方 VS Code 插件的 `debug` WebSocket 协议和编码，要求 DolphinDB Server
+支持调试协议（2.00.10.1 / 1.30.22.1 及以上）。连接仍通过 Jupyter 身份验证后的代理。
+
+1. 打开 `.dos`，在文件工具栏选择连接，点击行号左侧设置断点，或按 **F9** 切换当前行断点。
+2. 点击文件工具栏 **调试**，或按 **F5**。使用当前编辑内容启动独立调试会话；
+   首次运行前使用此文件选定的连接，已有普通执行会话时沿用其连接快照。
+   侧栏的调试按钮执行下拉框选中的 DOS；文件工具栏和 F5 执行当前编辑器中的 DOS。
+3. 命中断点后，当前行高亮，侧栏显示调用栈、当前栈帧变量、源码和调试输出。
+   点击栈帧切换变量作用域；变量右侧的预览按钮在数据浏览器中打开该暂停时刻的数据快照。
+   导入模块的源码从调试服务器读取，支持在只读源码视图中设置断点。
+   新一轮调试会关闭上一轮的模块源码窗口，重新打开时读取当前连接的源码。
+4. **F5** 继续、**F10** 逐过程、**F11** 进入函数、**Shift + F11** 跳出函数；
+   面板也提供暂停、异常时暂停、重新调试和停止按钮。**Shift + F5** 停止，
+   **Ctrl + Shift + F5** 用最新内容重新调试。
+5. 调试期间此文件只读，暂停普通运行和连接切换；停止后恢复编辑。
+   每个 DOS 的调试会话互相独立，调试变量与普通执行会话变量分开。
+   可在“正在运行的内核和终端”的 **DolphinDB 调试会话** 中停止单个或全部调试。
+
+文件断点和异常暂停选项使用 Jupyter 的 `IStateDB` 保存，不写入 DOS 源码。
+关闭该 DOS 的最后一个编辑视图会停止调试；刷新/关闭浏览器会断开调试连接。
+普通 DOS 执行会话的恢复机制保持不变。当前服务端协议不提供条件断点、监视表达式或变量赋值。
 
 ## DOS 文件与独立会话（当前开发版）
 
@@ -333,7 +358,7 @@ VS Code 功能（例如调试器和所有数据交互视图）的整体进度见
 - [x] 显示执行结果、`print()` 输出和错误信息。
 - [x] 浏览数据库、表和各文件的会话变量，预览表格。
 - [ ] 向量/矩阵交互视图及 CSV 导出。
-- [ ] 调试等其余能力按上游功能清单逐项迁移和验收。
+- [x] DOS 独立调试面板、断点、单步、调用栈、变量预览、异常暂停和调试会话管理。
 
 面向 JupyterLab 4 和 Jupyter Notebook 7；Notebook magic 当前支持 Python / IPython 内核。
 
@@ -344,7 +369,7 @@ Python 包已包含预构建前端，安装使用时无需 Node.js。
 使用 `notebook` 可选依赖同时安装 Notebook magic 所需的 DolphinDB Python SDK 与 IPython：
 
 ```shell
-pip install "dolphindb-extension[notebook]==0.1.0a6"
+pip install "dolphindb-extension[notebook]==0.1.0a7"
 ```
 
 仅使用 DOS 编辑器和连接管理时，可以省略 `[notebook]`。
@@ -370,6 +395,7 @@ npm ci
 uv run --extra notebook python scripts/sync_upstream.py --check
 uv run --extra notebook python scripts/sync_language.py --check
 uv run --extra notebook python scripts/sync_dataview.py --check
+uv run --extra notebook python scripts/sync_debugger.py --check
 npm exec tsc
 uv run --extra notebook jupyter-builder build .
 npm test
@@ -405,18 +431,21 @@ CodeMirror 和 Jupyter 编辑器扩展注册接口展示提示，无需启动 No
 替换主题颜色和浏览器辅助函数，并修正空数据、常量直方图和零成交量 K 线边界。
 来源及适配记录见 `frontend/upstream/dataview-provenance.json`。浏览器分页沿用上游查询方式，
 表操作模板适配自 `src/commands.ts` 的 `table_action` / `get_clause`，UI 使用 Jupyter 原生组件。
+`scripts/sync_debugger.py` 提取调试协议的二进制编解码函数，记录源码哈希和适配范围，
+见 `frontend/upstream/debugger-provenance.json`；调试面板复用 Jupyter 的调用栈、断点和变量组件。
 通信和数据类型解析直接使用上游锁定的 `dolphindb@3.1.41`。服务端仅识别连接、打印和结果
 的消息边界以保留会话及输出，不实现另一套 DolphinDB 数据类型编解码器。
 
 更新上游时先更新 submodule，再运行 `uv run python scripts/sync_upstream.py`、
-`uv run python scripts/sync_language.py` 和 `uv run python scripts/sync_dataview.py`，
+`uv run python scripts/sync_language.py`、`uv run python scripts/sync_dataview.py` 和
+`uv run python scripts/sync_debugger.py`，
 检查差异并重新构建。完整 VS Code 的 TreeView、编辑器等 API 由 Jupyter 适配；其他功能
 将在后续迁移中继续复用上游模块。构建产物包含所需代码，安装时不需要下载 submodule。
 
 ## 发布
 
-同步更新 `pyproject.toml` 与 `package.json` 中的版本（例如 `0.1.0a6` 对应
-`0.1.0-alpha.6`）、`package-lock.json` 和 `CHANGELOG.md`，运行 `uv lock`，
+同步更新 `pyproject.toml` 与 `package.json` 中的版本（例如 `0.1.0a7` 对应
+`0.1.0-alpha.7`）、`package-lock.json` 和 `CHANGELOG.md`，运行 `uv lock`，
 重新构建前端，再在干净的 `dist/` 目录中构建和检查产物。提交代码并创建对应版本的 Git 标签后发布。
 
 ```shell

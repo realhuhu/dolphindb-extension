@@ -1,0 +1,20 @@
+.ddb-debug-sidebar { min-width: 280px; color: var(--jp-ui-font-color1); }
+.ddb-debug-status { padding: 8px 12px; font: var(--jp-ui-font-size1) var(--jp-ui-font-family); text-transform: none; }
+.ddb-debug-status > strong { display: block; margin-bottom: 8px; }
+.ddb-debug-status .jp-HTMLSelect { width: 100%; }
+.ddb-debug-status select { width: 100%; text-overflow: ellipsis; }
+.ddb-debug-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.ddb-debug-state > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ddb-debug-sidebar .jp-Toolbar { align-items: center; box-shadow: none; z-index: auto; }
+.ddb-debug-sidebar .jp-ToolbarButtonComponent { display: flex; align-items: center; }
+.ddb-debug-sidebar .jp-DebuggerVariables-body { min-height: 0; overflow: auto; }
+.ddb-debug-sidebar .jp-DebuggerVariables-detail { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.ddb-debug-sidebar .jp-DebuggerVariables-renderVariable:disabled { display: none; }
+.ddb-debug-source { min-height: 80px; }
+.ddb-debug-source .jp-CodeEditorWrapper { min-height: 0; }
+.ddb-debug-output pre { margin: 0; padding: 8px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--jp-code-font-size) / var(--jp-code-line-height) var(--jp-code-font-family); }
+.ddb-debug-gutter { width: 18px; cursor: pointer; }
+.ddb-debug-gutter .cm-gutterElement { display: flex; align-items: center; justify-content: center; }
+.ddb-debug-breakpoint { box-sizing: border-box; display: inline-block; width: 10px; height: 10px; border: 2px solid var(--jp-error-color1); border-radius: 50%; }
+.ddb-debug-breakpoint.ddb-mod-verified { background: var(--jp-error-color1); }
+.ddb-debug-current-line { background: var(--jp-editor-selected-background); box-shadow: inset 3px 0 var(--jp-warn-color1); }

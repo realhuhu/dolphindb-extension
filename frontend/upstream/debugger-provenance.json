@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/dolphindb/vscode-extension",
+  "commit": "bd726b584540d09a8f23b423b040c9f5ce728d61",
+  "license": "Apache-2.0",
+  "sources": {
+    "src/debugger/utils.ts": "b165e4e3ef24ba2607b8e543b193d2074d7f1173cbc7a217e7d937da731b705a",
+    "src/debugger/network.ts": "f19bc538e1623cd550636ae8c7a86c5b7c096226e5e2f68eee571ccf74a13e9e",
+    "src/debugger/adapter.ts": "16a166f07a58a4691c666b230b8e18bf9747001ca5e7daad43263fe44c97874c",
+    "src/debugger/sources.ts": "511e840e7d55591aa99626450a974bdaa86a8f104be647d2edffcde7ce730f99"
+  },
+  "extracted": [
+    "basictype2ddbobj",
+    "array2ddbvector",
+    "json2ddbdict"
+  ],
+  "adaptations": [
+    "browser SDK import",
+    "realm-independent Array.isArray",
+    "authenticated Jupyter relay",
+    "serial RPC with timeouts and cancellation",
+    "document-scoped sessions",
+    "native Jupyter debugger panels and CodeMirror gutters"
+  ]
+}

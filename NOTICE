@@ -9,6 +9,14 @@ scripts/sync_upstream.py. Function documentation and completion use the same
 DolphinDB JavaScript SDK and its DocsProvider. Jupyter UI, configuration storage,
 document-session lifecycle, and authenticated transport are implemented here.
 
+Debug protocol encoding is extracted from upstream src/debugger/utils.ts by
+scripts/sync_debugger.py. The debug WebSocket messages, commands, source mapping
+and variable decoding follow src/debugger/network.ts, adapter.ts and sources.ts;
+their revisions and hashes are in frontend/upstream/debugger-provenance.json.
+Jupyter hosts the document lifecycle, cancellation and native debug UI. Native
+debugger components use JupyterLab's BSD-3-Clause-licensed @jupyterlab/debugger;
+its UI/model version is bundled together, independent of the kernel debugger.
+
 Variable location/form grouping, descriptions and the hover preview size limit
 are adapted from upstream src/variables.ts. DOS hover values reuse the same
 DolphinDB SDK inspector; Jupyter's TreeView and Tooltip provide the UI.
@@ -31,10 +39,40 @@ It uses Microsoft's vscode-textmate and vscode-oniguruma (MIT License), with
 Oniguruma WASM bundled locally. The syntax colors follow VS Code's Light+ and
 Dark+ theme defaults (MIT License): https://github.com/microsoft/vscode.
 
-The connection and data-explorer sidebar SVGs in style/icons are adapted from
+The connection, data-explorer and debugger SVGs in style/icons are adapted from
 the official DolphinDB logo in upstream icons/logo.svg at revision
 bd726b584540d09a8f23b423b040c9f5ce728d61. They retain its vector D and dolphin
-geometry, with an outline, theme colors, and distinct connection/table badges.
+geometry, with an outline, theme colors, and distinct connection/table/bug badges.
 
 Other outline icons are provided by Lucide (https://lucide.dev), distributed
 under the ISC License. Icons use JupyterLab's LabIcon API and native UI components.
+
+JupyterLab component license:
+
+Copyright (c) 2015-2025 Project Jupyter Contributors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

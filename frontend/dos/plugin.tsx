@@ -13,7 +13,7 @@ import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { DisposableDelegate } from '@lumino/disposable';
 import { Signal } from '@lumino/signaling';
 import { BoxPanel, SplitPanel, StackedLayout } from '@lumino/widgets';
-import { IConnectionModel } from '../tokens';
+import { IConnectionModel, IDosManager } from '../tokens';
 import type { ConnectionModel } from '../model';
 import { DosManager, type DosModel } from './model';
 import { DOS_MIME, languageSupport } from './language';
@@ -34,7 +34,7 @@ const prefix = 'dolphindb-extension:';
 type EditorWidget = IDocumentWidget<FileEditor>;
 
 export default {
-  id: `${prefix}dos`, autoStart: true,
+  id: `${prefix}dos`, autoStart: true, provides: IDosManager,
   requires: [IConnectionModel, IEditorTracker, IDocumentManager, IEditorLanguageRegistry, ILanguageEditors, ISessionWorkspace, IRenderMimeRegistry],
   optional: [ICommandPalette, IRunningSessionManagers, ILauncher, IFileBrowserFactory, ILabShell],
   activate: (app: JupyterFrontEnd, connections: ConnectionModel, editors: IEditorTracker, documents: IDocumentManager, languages: IEditorLanguageRegistry, languageEditors: LanguageEditors, workspace: SessionWorkspace, rendermime: IRenderMimeRegistry,
@@ -159,7 +159,7 @@ export default {
         model.changed.connect(resizeOutput);
         resizeOutput();
         layout.addWidget(split);
-        const toolbar = createDosToolbar({ model, runFile: () => runFile(widget), runSelection: () => runSelection(widget), batch, showWorkspace: () => workspace.sync(true) });
+        const toolbar = createDosToolbar({ model, runFile: () => runFile(widget), runSelection: () => runSelection(widget), batch, showWorkspace: () => workspace.sync(true), debug: () => app.commands.execute(prefix + 'debug-start') });
         toolbar.addClass('ddb-toolbar-widget');
         split.parent = null;
         const body = new BoxPanel({ direction: 'top-to-bottom', spacing: 0 });

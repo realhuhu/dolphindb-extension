@@ -10,6 +10,7 @@ import { ConnectionPanel } from './panel';
 import { IExtensionSettings, SETTINGS_ID, SettingsModel } from './settings';
 import { IConnectionModel } from './tokens';
 import dosPlugin from './dos/plugin';
+import debuggerPlugin from './debugger/plugin';
 import notebookPlugin from './notebook/plugin';
 import notebookExecutorPlugin from './notebook/executor-plugin';
 import languagePlugin from './language/plugin';
@@ -100,4 +101,4 @@ const plugin: JupyterFrontEndPlugin<ConnectionModel> = {
   },
 };
 
-export default [settingsPlugin, plugin, languagePlugin, dataBrowserPlugin, workspacePlugin, dosPlugin, notebookExecutorPlugin, notebookPlugin];
+export default [settingsPlugin, plugin, languagePlugin, dataBrowserPlugin, workspacePlugin, dosPlugin, debuggerPlugin, notebookExecutorPlugin, notebookPlugin];

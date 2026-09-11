@@ -16,7 +16,7 @@ import { schemaDisplayValue } from '../session/schema';
 import { ActionsButton, openActions, type MenuAction } from '../session/menu';
 import { TABLE_ACTIONS, tableDefinition, tableStatement } from '../session/table-actions';
 import { usePreferences } from '../data/preferences';
-import { runIcon, stopIcon, refreshIcon, clearIcon, tableIcon, previewIcon, caretDownIcon, caretRightIcon, collapseAllIcon, expandAllIcon } from '../icons';
+import { runIcon, stopIcon, refreshIcon, clearIcon, tableIcon, previewIcon, caretDownIcon, caretRightIcon, collapseAllIcon, expandAllIcon, debugIcon } from '../icons';
 
 function useModel(model: Pick<WorkspaceModel, 'changed'>): void {
   const [, update] = React.useReducer(n => n + 1, 0);
@@ -83,16 +83,17 @@ export function OutputPanel({ model, rendermime }: { model: DosModel; rendermime
   </section>;
 }
 
-export function createDosToolbar({ model, runFile, runSelection, batch, showWorkspace }: { model: DosModel; runFile: () => unknown; runSelection: () => unknown; batch: () => unknown; showWorkspace: () => void }): SessionToolbar {
+export function createDosToolbar({ model, runFile, runSelection, batch, showWorkspace, debug }: { model: DosModel; runFile: () => unknown; runSelection: () => unknown; batch: () => unknown; showWorkspace: () => void; debug: () => unknown }): SessionToolbar {
   return new SessionToolbar({ label: 'DolphinDB 文件工具栏', changed: model.changed,
     state: () => ({ profiles: model.manager.connections.state.connections, profile: model.profile, defaultProfile: model.manager.defaultProfile,
-      selection: model.selection, locked: model.locked, busy: model.executing, disabled: model.locked || model.busy || Boolean(model.session),
-      canClose: Boolean(model.session) && !model.executing && !model.loading, status: model.status, label: 'DOS 文件连接',
+      selection: model.selection, locked: model.locked || model.debugging, busy: model.executing, disabled: model.locked || model.busy || model.debugging || Boolean(model.session),
+      canClose: Boolean(model.session) && !model.executing && !model.loading && !model.debugging, status: model.status, label: 'DOS 文件连接',
       closeDescription: `关闭 ${model.path} 的 DolphinDB 会话？会话变量将被释放，文件内容会保留。`,
       select: id => model.select(id), close: () => model.closeSession(), showWorkspace }),
     actions: [
-      { name: 'run', label: '运行文件', icon: runIcon, tooltip: '运行整个 DOS 文件（Ctrl + Shift + Enter）', run: runFile, enabled: () => !model.executing && !model.loading },
-      { name: 'selection', label: '运行选中/当前行', tooltip: '运行选中代码；没有选区时运行当前行（Ctrl + Enter）', run: runSelection, enabled: () => !model.executing && !model.loading },
+      { name: 'run', label: '运行文件', icon: runIcon, tooltip: '运行整个 DOS 文件（Ctrl + Shift + Enter）', run: runFile, enabled: () => !model.executing && !model.loading && !model.debugging },
+      { name: 'selection', label: '运行选中/当前行', tooltip: '运行选中代码；没有选区时运行当前行（Ctrl + Enter）', run: runSelection, enabled: () => !model.executing && !model.loading && !model.debugging },
+      { name: 'debug', label: '调试', icon: debugIcon, tooltip: '调试此 DOS 文件（F5）', run: debug, enabled: () => Boolean(model.profile) && !model.executing && !model.loading && !model.debugging },
       { name: 'batch', label: '批量运行', tooltip: '依次运行打开的或文件浏览器选中的 DOS 文件', run: batch },
       { name: 'interrupt', label: '中断', icon: stopIcon, tooltip: '中断当前会话的执行', run: () => model.interrupt(), enabled: () => model.executing },
     ] });
@@ -102,7 +103,7 @@ function WorkspaceHeader({ model, path, scope }: WorkspaceBinding): React.ReactE
   return <div className="ddb-document-workspace">
     <header><strong title={path()}>{path().split('/').pop()}</strong><span>{model.status}</span></header>
     <div className="ddb-session-meta"><span>{model.profile?.name ?? '未选择连接'}</span>
-      <small>{model.locked ? `连接已固定 · ${scope === 'kernel' ? '当前 Python 内核的 DDB 会话' : '此文件独立会话'}` : '首次运行前可切换连接'}</small>
+      <small>{model.debugging ? '调试变量请在调试面板中查看' : model.locked ? `连接已固定 · ${scope === 'kernel' ? '当前 Python 内核的 DDB 会话' : '此文件独立会话'}` : '首次运行前可切换连接'}</small>
     </div>
   </div>;
 }

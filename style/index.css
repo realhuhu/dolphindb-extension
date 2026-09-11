@@ -1,3 +1,6 @@
+@import url('@jupyterlab/debugger/style/base.css');
+@import url('./debugger.css');
+
 /* Jupyter owns control styling, toolbar overflow, focus and disclosure behavior. */
 .ddb-sidebar { min-width: 260px; background: var(--jp-layout-color1); color: var(--jp-ui-font-color1); }
 .ddb-sidebar > .jp-SidePanel-header:empty { display: none; }

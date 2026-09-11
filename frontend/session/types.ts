@@ -8,6 +8,7 @@ export interface WorkspaceModel {
   readonly profile: { name: string } | null | undefined;
   readonly locked: boolean;
   readonly executing: boolean;
+  readonly debugging?: boolean;
   readonly panelLoading: boolean;
   readonly status: string;
   readonly databases: DatabaseEntry[];

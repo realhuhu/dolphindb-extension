@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0a7 - 2026-09-11
+
+- Add a DOS-only debugger with a dedicated D-and-bug sidebar button below the database/variables panel, reusing the official VS Code extension's debug WebSocket protocol and binary codec.
+- Support persistent line breakpoints, exception pauses, continue/pause/stop/restart, step over/into/out, call stacks, server module sources, debug output and variable snapshots in the data browser.
+- Reuse Jupyter's debugger components, highlight the paused source line, and manage independent per-file debug connections in the Running panel; restore editing and connection selection when debugging ends.
+- Start the DOS selected in the debug sidebar while retaining current-editor targeting for the file toolbar and F5.
+- Share one debug session across multiple views of a DOS, including concurrent restoration with saved breakpoints; keep it active until the last view closes.
+- Synchronize breakpoint and exception-setting edits made during startup before executing the script; invalidate old module source windows and delayed replies when a new debug run starts.
+- Add upstream debugger provenance checks, protocol/session/plugin regression tests and local DolphinDB/Jupyter integration verification.
+
 ## 0.1.0a6 - 2026-09-11
 
 - Expose browser pagination defaults, table/hover previews, output scrolling/folding, batch error policy, editor assistance toggles, connection address visibility and automatic workspace opening in Settings Editor.

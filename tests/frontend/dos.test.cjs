@@ -306,3 +306,25 @@ test('closing before the initial connection list arrives does not start a previe
   assert.equal(f.previews.length, 0);
   assert.equal(model.loading, false);
 });
+
+test('debugging a DOS file blocks ordinary runs and connection changes', async () => {
+  const f = fixture(); await f.manager.ready;
+  const model = f.manager.document('debug.dos'); model.open(); await model.initialize();
+  model.debugging = true;
+  assert.equal(await model.run('a=1'), false);
+  await assert.rejects(model.select('other'), /调试/);
+  assert.equal(model.profile.id, 'default'); assert.equal(model.status, '调试中');
+  model.debugging = false; await model.select('other'); assert.equal(model.profile.id, 'other');
+  model.closeView();
+});
+
+test('a default connection change cannot change the profile or preview of an active debugger', async () => {
+  const f = fixture(); await f.manager.ready;
+  const model = f.manager.document('debug-profile.dos'); model.open(); await model.initialize();
+  model.debugging = true;
+  f.connections.state.activeId = 'other'; f.connections.changed.emit(); await tick();
+  assert.equal(model.profile.id, 'default'); assert.equal(model.selection, 'default');
+  assert.equal(f.previews.length, 1);
+  model.debugging = false; await model.useDefault(); assert.equal(model.profile.id, 'other');
+  assert.equal(f.previews.length, 2); model.closeView();
+});

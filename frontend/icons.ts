@@ -1,9 +1,10 @@
 import { LabIcon } from '@jupyterlab/ui-components';
 import { createElement, type IconNode, FileCode, Notebook, Eye, Table2, Play, Square,
   RefreshCw, Plus, Settings, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eraser, PanelRight,
-  Circle, CircleCheck, LoaderCircle, ChevronLeft, SquareArrowOutUpRight, Ellipsis } from 'lucide';
+  Circle, CircleCheck, LoaderCircle, ChevronLeft, SquareArrowOutUpRight, Ellipsis, Pause, ShieldAlert } from 'lucide';
 import connectionsSvg from '../style/icons/dolphindb-connections.svg';
 import dataExplorerSvg from '../style/icons/dolphindb-data-explorer.svg';
+import debuggerSvg from '../style/icons/dolphindb-debugger.svg';
 
 /** Lucide outlines wrapped in Jupyter's native icon API, with theme-aware strokes. */
 function outline(name: string, node: IconNode): LabIcon {
@@ -34,3 +35,6 @@ export const busyIcon = outline('busy', LoaderCircle);
 export const backIcon = outline('back', ChevronLeft);
 export const openIcon = outline('open', SquareArrowOutUpRight);
 export const moreIcon = outline('more', Ellipsis);
+export const debugIcon = new LabIcon({ name: 'dolphindb-extension:debug', svgstr: debuggerSvg });
+export const pauseIcon = outline('pause', Pause);
+export const exceptionIcon = outline('exception', ShieldAlert);
