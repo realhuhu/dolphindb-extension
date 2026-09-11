@@ -3,7 +3,7 @@
 将 [DolphinDB VS Code 插件](https://github.com/dolphindb/vscode-extension) 的能力迁移到 Jupyter，
 支持 DolphinDB 脚本开发和 Notebook 中的 DDB 代码执行。
 
-**当前源码版本为 `0.1.0a3`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
+**当前版本为 `0.1.0a3`。** 在 Jupyter 侧边栏中新增、编辑、删除、测试和切换
 DolphinDB 连接，查看当前连接、节点名称和服务器版本；提供 Settings Editor、DOS 编辑与独立会话，以及 Notebook 中的
 `%ddb` / `%%ddb` 执行和 Python 返回值赋值，并在这些编辑区域复用上游语言服务。
 
@@ -266,17 +266,13 @@ VS Code 功能（例如调试器和所有数据交互视图）的整体进度见
 
 需要 Python 3.10 或更高版本，以及 JupyterLab 4 / Notebook 7。
 Python 包已包含预构建前端，安装使用时无需 Node.js。
-PyPI 已发布的 `0.1.0a2` 仅包含可视化连接管理：
+使用 `notebook` 可选依赖同时安装 Notebook magic 所需的 DolphinDB Python SDK 与 IPython：
 
 ```shell
-pip install dolphindb-extension==0.1.0a2
+pip install "dolphindb-extension[notebook]==0.1.0a3"
 ```
 
-使用当前源码版本的 DOS、Notebook 与语言服务功能，按下方本地开发步骤构建后安装：
-
-```shell
-pip install "dist/dolphindb_extension-0.1.0a3-py3-none-any.whl[notebook]"
-```
+仅使用 DOS 编辑器和连接管理时，可以省略 `[notebook]`。
 
 包的 Python 导入名称为 `dolphindb_extension`：
 
