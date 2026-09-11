@@ -1,14 +1,19 @@
 import * as React from 'react';
 import { ReactWidget } from '@jupyterlab/apputils';
-import { Accordion, AccordionItem, Toolbar as ReactToolbar, TreeItem, TreeView, type TreeItemElement } from '@jupyter/react-components';
-import { runIcon, stopIcon, refreshIcon, clearIcon, spreadsheetIcon, FilterBox, SidePanel, PanelWithToolbar, ToolbarButton, ToolbarButtonComponent } from '@jupyterlab/ui-components';
+import { Accordion, AccordionItem, Toolbar as ReactToolbar, TreeItem, TreeView, type AccordionItemElement, type TreeItemElement } from '@jupyter/react-components';
+import { SidePanel, PanelWithToolbar, ToolbarButton, ToolbarButtonComponent } from '@jupyterlab/ui-components';
 import type { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { AccordionPanel } from '@lumino/widgets';
 import type { DosModel } from './model';
-import { NativeOutput } from './output';
+import { NativeOutput, ResultTable } from './output';
 import { SessionToolbar } from '../session/toolbar';
 import type { WorkspaceBinding, WorkspaceModel } from '../session/types';
-import { DebouncedActions } from '../session/interactions';
+import { DebouncedActions, loadTableExpression } from '../session/interactions';
+import { VariablesContent } from '../session/variables-view';
+import { formatBytes, totalBytes } from '../session/variables';
+import { useWorkspaceHover, WorkspaceTooltip, type WorkspaceHover } from '../session/hover';
+import { schemaDisplayValue } from '../session/schema';
+import { runIcon, stopIcon, refreshIcon, clearIcon, tableIcon, previewIcon, caretDownIcon, caretRightIcon, collapseAllIcon, expandAllIcon } from '../icons';
 
 function useModel(model: Pick<WorkspaceModel, 'changed'>): void {
   const [, update] = React.useReducer(n => n + 1, 0);
@@ -20,11 +25,13 @@ export function OutputPanel({ model, rendermime }: { model: DosModel; rendermime
   const region = React.useRef<HTMLElement>(null);
   const following = React.useRef(false);
   const latest = model.outputs.at(-1);
+  const folding = model.folding;
+  folding.retain(model.outputs.map(output => output.id));
   React.useLayoutEffect(() => {
     const parent = region.current?.parentElement;
-    following.current = Boolean(latest);
-    if (parent && latest) { parent.scrollTop = parent.scrollHeight; }
-  }, [model.outputs.length, latest?.id, latest?.prints.length, latest?.value, latest?.error, latest?.status]);
+    following.current = !folding.collapsed && Boolean(latest && folding.expanded(latest.id));
+    if (parent && following.current) { parent.scrollTop = parent.scrollHeight; }
+  }, [model.outputs.length, latest?.id, latest?.prints.length, latest?.value, latest?.error, latest?.status, folding.collapsed]);
   React.useLayoutEffect(() => {
     const parent = region.current?.parentElement;
     if (!parent) { return; }
@@ -32,26 +39,42 @@ export function OutputPanel({ model, rendermime }: { model: DosModel; rendermime
     // Inactive document tabs have no layout yet; follow restored output once revealed.
     const observer = new ResizeObserver(() => {
       const nextVisible = parent.clientWidth > 0 && parent.clientHeight > 0;
-      if (nextVisible && !visible) { following.current = true; }
+      if (nextVisible && !visible && !model.folding.collapsed) { following.current = Boolean(model.outputs.at(-1) && model.folding.expanded(model.outputs.at(-1)!.id)); }
       visible = nextVisible;
-      if (following.current && visible && model.outputs.length) { parent.scrollTop = parent.scrollHeight; }
+      if (following.current && visible && !model.folding.collapsed && model.outputs.length) { parent.scrollTop = parent.scrollHeight; }
     });
     observer.observe(parent);
     // MIME renderers finish asynchronously, after the enclosing React render.
     observer.observe(region.current!);
     return () => observer.disconnect();
   }, [model]);
+  const setAll = (expanded: boolean) => { following.current = false; folding.setAll(expanded); model.changed.emit(); };
   return <section ref={region} className="ddb-output" aria-label={`执行结果 ${model.path}`}>
-    <ReactToolbar className="ddb-output-toolbar" aria-label="执行结果工具栏"><strong>执行结果</strong><span>{model.status}</span>
+    <ReactToolbar className="ddb-output-toolbar" aria-label="执行结果工具栏">
+      <ToolbarButtonComponent icon={folding.collapsed ? caretRightIcon : caretDownIcon} label="执行结果"
+        tooltip={folding.collapsed ? '展开执行结果面板' : '收起执行结果面板'} aria-expanded={!folding.collapsed}
+        onClick={() => { following.current = false; folding.collapsed = !folding.collapsed; model.changed.emit(); }}/>
+      <span className="ddb-output-status">{model.status}</span>
+      <ToolbarButtonComponent icon={collapseAllIcon} tooltip="全部折叠" enabled={model.outputs.length > 0} onClick={() => setAll(false)}/>
+      <ToolbarButtonComponent icon={expandAllIcon} tooltip="全部展开" enabled={model.outputs.length > 0} onClick={() => setAll(true)}/>
       <ToolbarButtonComponent icon={clearIcon} label="清空显示" enabled={model.outputs.length > 0}
         onClick={() => { model.outputs = []; model.changed.emit(); }} tooltip="只清空当前显示，刷新页面可恢复会话历史"/></ReactToolbar>
+    <div hidden={folding.collapsed}>
     {model.notice && <div className="ddb-dos-notice" role="status">{model.notice}</div>}
     {!model.outputs.length && <div className="ddb-output-empty">运行文件，或选中代码后按 Ctrl + Enter。<br/><small>每个 DOS 文件使用独立会话。</small></div>}
-    <Accordion expandMode="multi">{model.outputs.map(output => <AccordionItem key={output.id} expanded className="ddb-output-entry"
-      onChange={() => { following.current = false; }}>
+    <Accordion expandMode="multi">{model.outputs.map(output => <AccordionItem key={output.id} expanded={folding.expanded(output.id)} className="ddb-output-entry"
+      onChange={event => {
+        if (event.target !== event.currentTarget) { return; }
+        const expanded = (event.target as AccordionItemElement).expanded;
+        if (folding.expanded(output.id) === expanded) { return; }
+        following.current = false; folding.setExpanded(output.id, expanded); model.changed.emit();
+      }}>
+      <caretDownIcon.react slot="expanded-icon" width="16px" height="16px"/>
+      <caretRightIcon.react slot="collapsed-icon" width="16px" height="16px"/>
       <span slot="heading" className="ddb-output-heading"><span>{output.label}</span><small>{output.status === 'running' ? '运行中' : output.error ? '执行失败' : output.elapsed !== undefined ? `${Math.round(output.elapsed)} ms` : '预览'}</small></span>
       <NativeOutput entry={output} rendermime={rendermime}/>
     </AccordionItem>)}</Accordion>
+    </div>
   </section>;
 }
 
@@ -80,52 +103,61 @@ function WorkspaceHeader({ model, path, scope }: WorkspaceBinding): React.ReactE
 }
 
 type Schedule = (key: string, action: () => void | Promise<void>) => void;
+type TableReference = { database: string; table: string };
 
-function DatabaseItem({ database, model, schedule }: { database: WorkspaceModel['databases'][number]; model: WorkspaceModel; schedule: Schedule }): React.ReactElement {
-  const item = React.useRef<TreeItemElement>(null);
-  const toggle = () => { if (item.current) { item.current.expanded = !item.current.expanded; } };
-  return <TreeItem ref={item} className="jp-TreeItem ddb-database" aria-label={database.path} title={database.path}
+function DatabaseItem({ database, binding: { model, captureInsertion }, schedule, schema }: {
+  database: WorkspaceModel['databases'][number]; binding: WorkspaceBinding; schedule: Schedule; schema: WorkspaceHover<TableReference>;
+}): React.ReactElement {
+  const [expanded, setExpanded] = React.useState(false);
+  const toggle = () => { schema.dismiss(); setExpanded(value => !value); };
+  return <TreeItem expanded={expanded} className="jp-TreeItem ddb-database" aria-label={database.path} title={database.path}
+    onExpand={event => { if (event.target === event.currentTarget) { setExpanded((event.target as TreeItemElement).expanded); } }}
     onKeyDown={event => { if (event.target === event.currentTarget && event.key === 'Enter') { event.preventDefault(); toggle(); } }}>
+    <caretRightIcon.react slot="expand-collapse-glyph" className="ddb-tree-chevron" width="12px" height="12px"/>
     <span className="ddb-database-name" onClick={toggle}>{database.catalog ?? database.path}</span><span slot="end">{database.tables.length}</span>
     {database.tables.map(table => {
-      const preview = () => { if (!model.executing) { schedule('table-preview', () => model.inspectTable(database.path, table)); } };
-      return <TreeItem key={table} className="jp-TreeItem ddb-table-item" disabled={model.executing} aria-label={table}
-        title={`预览 ${database.path}/${table} 的前 100 行`} onClick={preview}
-        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); preview(); } }}>
-        <spreadsheetIcon.react slot="start" width="16" height="16"/><span>{table}</span>
+      const reference = { database: database.path, table };
+      const preview = () => { schema.dismiss(); if (!model.executing) { schedule('table-preview', () => model.inspectTable(database.path, table)); } };
+      const insert = () => { schema.dismiss(); const action = captureInsertion(loadTableExpression(database.path, table)); if (action) { schedule('insert-table', action); } };
+      return <TreeItem key={table} className="jp-TreeItem ddb-table-item" aria-label={table} title=""
+        aria-describedby={schema.hover?.item.database === database.path && schema.hover.item.table === table ? schema.id : undefined}
+        onFocus={event => { if (event.target === event.currentTarget) { schema.enter(reference, event.currentTarget); } }} onBlur={schema.leave}
+        onMouseDown={event => { if (event.button === 0) { event.preventDefault(); } }} onClick={insert}
+        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); insert(); } }}>
+        <tableIcon.react slot="start" elementSize="normal"/><span className="ddb-table-name"
+          onMouseEnter={event => schema.enter(reference, event.currentTarget)} onMouseLeave={schema.leave}>{table}</span>
+        <span slot="end" className="ddb-table-preview-action" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
+          <ToolbarButtonComponent icon={previewIcon} tooltip={`预览 ${table} · 前 100 行`} enabled={!model.executing} onClick={preview}/>
+        </span>
       </TreeItem>;
     })}
     {!database.tables.length && <TreeItem disabled>暂无可见表</TreeItem>}
   </TreeItem>;
 }
 
-function DatabaseContent({ model, schedule }: { model: WorkspaceModel; schedule: Schedule }): React.ReactElement {
+function DatabaseContent({ binding, schedule, viewport }: { binding: WorkspaceBinding; schedule: Schedule; viewport: HTMLElement }): React.ReactElement {
+  const { model } = binding;
+  const schema = useWorkspaceHover<TableReference>(binding, {
+    snapshot: () => model.databases, key: ({ database, table }) => JSON.stringify([database, table]),
+    read: async ({ database, table }) => schemaDisplayValue(await model.previewTableSchema(database, table)),
+    error: '无法读取表结构，表可能已变化或当前账号没有权限。请刷新后重试。',
+  });
   return <div className="ddb-data-section">
       {model.panelLoading && <p className="ddb-muted">正在读取数据库…</p>}
       {model.databaseError && <p className="ddb-panel-error">{model.databaseError}</p>}
       {!model.panelLoading && !model.databaseError && !model.databases.length && <p className="ddb-muted">{model.profile ? '暂无可见的 DFS 数据库。' : '选择连接后显示数据库。'}</p>}
-      <TreeView className="jp-TreeView" aria-label="DolphinDB 数据库">{model.databases.map(database => <DatabaseItem key={database.path} database={database} model={model} schedule={schedule}/>)}</TreeView>
-  </div>;
-}
-
-function VariablesContent({ binding: { model, captureInsertion }, schedule }: { binding: WorkspaceBinding; schedule: Schedule }): React.ReactElement {
-  const [filter, setFilter] = React.useState('');
-  const updateFilter = React.useCallback((_filter: unknown, query?: string) => setFilter(query ?? ''), []);
-  return <div className="ddb-data-section">
-      {!model.locked ? <p className="ddb-muted">首次运行 DDB 后，显示当前会话的变量。</p> : <>
-        {model.variablesError && <p className="ddb-panel-error">{model.variablesError}</p>}
-        {(model.variables.length > 5 || filter) && <FilterBox placeholder="搜索变量" initialQuery={filter} useFuzzyFilter={false} updateFilter={updateFilter}/>}
-        {!model.variables.length && !model.variablesError && <p className="ddb-muted">此会话暂无变量。</p>}
-        <TreeView className="jp-TreeView" aria-label="DolphinDB 会话变量">{model.variables.filter(v => v.name.toLowerCase().includes(filter.toLowerCase())).map(variable => {
-          const insert = () => { const action = captureInsertion(variable.name); if (action) { schedule('insert-variable', action); } };
-          return <TreeItem key={variable.name} className="jp-TreeItem ddb-variable"
-          aria-label={`插入变量 ${variable.name}`} title={`点击插入变量名 · ${variable.type} · ${variable.form} · ${variable.bytes} bytes`}
-          onMouseDown={event => { if (event.button === 0) { event.preventDefault(); } }}
-          onClick={insert} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); insert(); } }}>
-          <code>{variable.name}</code><small slot="end">{variable.type}{variable.shared ? ' · 共享' : ''}</small>
-          <span className="ddb-variable-value">{variable.value ?? `${variable.rows} × ${variable.columns} · ${variable.form}`}</span>
-        </TreeItem>; })}</TreeView>
-      </>}
+      <TreeView className="jp-TreeView" aria-label="DolphinDB 数据库">{model.databases.map(database => <DatabaseItem key={database.path} database={database} binding={binding} schedule={schedule} schema={schema}/>)}</TreeView>
+      {schema.hover && <WorkspaceTooltip controller={schema} anchor={schema.hover.anchor} viewport={viewport}>
+        <div className="ddb-hover-preview ddb-schema-preview" aria-busy={schema.hover.loading}>
+          <header><code>{schema.hover.item.table}</code><span>表结构</span></header>
+          <div className="ddb-variable-preview-meta">{schema.hover.item.database}</div>
+          {schema.hover.value ? <><ResultTable value={schema.hover.value} showSummary={false}/>
+            <div className="ddb-variable-preview-meta">{schema.hover.value.totalRows} 个字段
+              {schema.hover.value.totalRows! > schema.hover.value.rows!.length ? ` · 显示前 ${schema.hover.value.rows!.length} 个` : ''}</div></>
+            : <pre>{schema.hover.text}</pre>}
+          <footer>点击表名插入 loadTable(...)；眼睛按钮预览数据。</footer>
+        </div>
+      </WorkspaceTooltip>}
   </div>;
 }
 
@@ -147,15 +179,18 @@ export class WorkspacePanel extends SidePanel {
   private databases = new PanelWithToolbar();
   private variables = new PanelWithToolbar();
   private databaseView = new WorkspaceView(() => this.binding ? <DatabaseContent key={`${this.binding.path()}:${this.binding.model.profile?.name}`}
-    model={this.binding.model} schedule={this.schedule}/> : <></>);
-  private variablesView = new WorkspaceView(() => this.binding ? <VariablesContent key={this.binding.path()} binding={this.binding} schedule={this.schedule}/> : <></>);
-  private count = new WorkspaceView(() => <span className="ddb-variable-count">{this.binding?.model.variables.length ?? 0}</span>);
+    binding={this.binding} schedule={this.schedule} viewport={this.viewport}/> : <></>);
+  private variablesView = new WorkspaceView(() => this.binding ? <VariablesContent key={this.binding.path()} binding={this.binding} schedule={this.schedule} viewport={this.viewport}/> : <></>);
+  private count = new WorkspaceView(() => {
+    const variables = this.binding?.model.variables ?? [], bytes = totalBytes(variables);
+    return <span className="ddb-variable-count" title={`${variables.length} 个变量 · ${bytes} bytes`}>{variables.length} · {formatBytes(bytes)}</span>;
+  });
   private refreshButton = new ToolbarButton({ icon: refreshIcon, tooltip: '刷新数据库和变量', onClick: () => {
     const model = this.binding?.model;
     if (model) { this.schedule('refresh', () => model.refreshPanels()); }
   } });
 
-  constructor() {
+  constructor(private viewport: HTMLElement) {
     super();
     this.header.addWidget(this.heading);
     this.databases.title.label = '数据库';

@@ -11,7 +11,8 @@ export function resultData(value: DisplayValue): IMimeBundle {
   return {
     'text/plain': [value.columns.join('\t'), ...(value.rows ?? []).map(row => row.join('\t'))].join('\n'),
     [TABLE_MIME]: { columns: value.columns, rows: value.rows ?? [], totalRows: value.totalRows ?? value.rows?.length ?? 0,
-      ...(value.sortRanks ? { sortRanks: value.sortRanks } : {}) },
+      ...(value.sortRanks ? { sortRanks: value.sortRanks } : {}),
+      ...(value.totalColumns === undefined ? {} : { totalColumns: value.totalColumns }) },
   };
 }
 

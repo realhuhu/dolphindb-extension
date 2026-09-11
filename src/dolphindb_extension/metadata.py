@@ -1,6 +1,59 @@
 """Read-only language and workspace metadata in the owning kernel session."""
 
 import json
+import pprint
+from itertools import islice
+
+
+def _variable_preview(session, name):
+    # Same 10 KiB limit as upstream DdbVar.resolve_tooltip. Check inside the
+    # evaluation, since a shared variable may have grown since the last snapshot.
+    # Return a single object: putting mutable objects in an ANY vector loses ownership.
+    value = session.run(
+        f'if ((exec count(*) from objs(true) where name = {name}) == 0) throw "变量已不存在，请刷新变量面板。";\n'
+        f'if ((exec first(bytes) from objs(true) where name = {name}) > 10240) throw "变量超过 10 KiB，请刷新变量面板。";\n'
+        f'objByName({name})'
+    )
+    return _variable_display(value)
+
+
+def _variable_display(value):
+    """Serialize a bounded grid, retaining native values until after sorting."""
+    import numpy as np
+    import pandas as pd
+
+    def grid(frame, total_rows, total_columns=None):
+        result = _table_preview(frame)
+        result["totalRows"] = total_rows
+        if total_columns is not None:
+            result["totalColumns"] = total_columns
+        return result
+
+    if isinstance(value, pd.DataFrame):
+        return grid(value.iloc[:10, :8], len(value), len(value.columns))
+    if isinstance(value, dict):
+        items = list(islice(value.items(), 10))
+        return grid(pd.DataFrame({"键": pd.Series([key for key, _ in items], dtype=object),
+                                  "值": pd.Series([item for _, item in items], dtype=object)}), len(value))
+
+    # DolphinDB's Python SDK returns matrices as [ndarray, row labels, column labels].
+    row_labels = column_labels = None
+    if isinstance(value, list) and len(value) == 3 and isinstance(value[0], np.ndarray) and value[0].ndim == 2:
+        value, row_labels, column_labels = value
+    if isinstance(value, np.ndarray) and value.ndim == 2:
+        frame = pd.DataFrame(value[:10, :8], columns=None if column_labels is None else column_labels[:8])
+        labels = list(range(len(frame))) if row_labels is None else row_labels[:10]
+        frame.insert(0, "索引", pd.Series(labels, dtype=object), allow_duplicates=True)
+        return grid(frame, value.shape[0], value.shape[1] + 1)
+    if isinstance(value, (list, tuple, set)) or isinstance(value, np.ndarray) and value.ndim > 0:
+        items = list(islice(value, 10))
+        return grid(pd.DataFrame({"索引": range(len(items)), "值": pd.Series(items, dtype=object)}), len(value))
+
+    with np.printoptions(threshold=50, edgeitems=3, linewidth=80), pd.option_context(
+        "display.max_rows", 10, "display.max_columns", 8, "display.max_colwidth", 80, "display.width", 80
+    ):
+        text = str(value) if isinstance(value, (str, np.generic)) else pprint.pformat(value, width=80, depth=5, compact=True, sort_dicts=False)
+    return {"text": text[:8000] + "\n…" if len(text) > 8000 else text}
 
 
 def _strings(value):
@@ -92,6 +145,15 @@ def inspect_session(session, operation: str, arguments: dict):
         if not hasattr(table, "columns") or not hasattr(table, "itertuples"):
             raise ValueError("Expected a table preview")
         return _table_preview(table)
+    if operation == "tableSchema":
+        schema = session.run(f"schema(loadTable({literal('database')}, {literal('table')})).colDefs")
+        if not hasattr(schema, "columns") or not hasattr(schema, "itertuples"):
+            raise ValueError("Expected a table schema")
+        result = _table_preview(schema.iloc[:100])
+        result["totalRows"] = len(schema)
+        return result
+    if operation == "variablePreview":
+        return _variable_preview(session, literal("name"))
 
     if operation == "snapshot":
         variables = [{key: str(row.get(key, "")) for key in ("name", "form", "type")}

@@ -1,7 +1,7 @@
-import * as React from 'react';
 import type { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
-import { Dialog, ICommandPalette, ReactWidget, showDialog } from '@jupyterlab/apputils';
+import { ICommandPalette } from '@jupyterlab/apputils';
 import { IEditorLanguageRegistry } from '@jupyterlab/codemirror';
+import type { CodeEditor } from '@jupyterlab/codeeditor';
 import { INotebookTracker, NotebookActions, type NotebookPanel } from '@jupyterlab/notebook';
 import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { IConnectionModel } from '../tokens';
@@ -17,8 +17,9 @@ import type { DocumentWidget } from '@jupyterlab/docregistry';
 import type { FileEditor } from '@jupyterlab/fileeditor';
 import { ISessionWorkspace, type SessionWorkspace } from '../session/workspace';
 import { SessionToolbar } from '../session/toolbar';
-import { Result, registerDdbRenderer } from '../dos/output';
+import { registerDdbRenderer } from '../dos/output';
 import { captureVariableInsertion } from '../session/interactions';
+import { showTablePreview } from '../session/preview';
 
 function createNotebookToolbar(model: NotebookConnection, insert: () => void, showWorkspace: () => void): SessionToolbar {
   return new SessionToolbar({ label: 'Notebook DolphinDB 工具栏', changed: model.changed,
@@ -37,13 +38,17 @@ export default {
   id: 'dolphindb-extension:notebook', autoStart: true,
   requires: [IConnectionModel, INotebookTracker, IEditorLanguageRegistry, ILanguageEditors, IDocumentManager, ISessionWorkspace, IRenderMimeRegistry],
   optional: [ICommandPalette],
-  activate: (app: JupyterFrontEnd, connections: ConnectionModel, notebooks: INotebookTracker,
+  activate: async (app: JupyterFrontEnd, connections: ConnectionModel, notebooks: INotebookTracker,
     languages: IEditorLanguageRegistry, languageEditors: LanguageEditors, documents: IDocumentManager, workspace: SessionWorkspace, rendermime: IRenderMimeRegistry, palette: ICommandPalette | null) => {
     registerDdbRenderer(rendermime);
     if (!connections.loaded) { void connections.refresh(); }
     if (!languages.findByMIME(DOS_MIME)) {
       languages.addLanguage({ name: 'DolphinDB', mime: DOS_MIME, extensions: ['dos'], load: async () => languageSupport() });
     }
+    // CodeMirrorEditor applies asynchronous language loads without discarding
+    // stale requests. Finish Python's initial load before switching cells to DDB,
+    // otherwise that late result can overwrite an already highlighted %%ddb cell.
+    await Promise.all(['text/x-python', 'text/x-ipython', DOS_MIME].map(mime => languages.getLanguage(mime)));
     const models = new WeakMap<NotebookPanel, NotebookConnection>();
     const insert = (panel: NotebookPanel) => {
       NotebookActions.insertBelow(panel.content);
@@ -69,24 +74,24 @@ export default {
       });
       const preview = (_sender: NotebookConnection, result: { title: string; value: import('../dos/runtime').DisplayValue }) => {
         if (app.shell.currentWidget === panel) {
-          const body = ReactWidget.create(<Result value={result.value} rendermime={rendermime}/>);
-          body.addClass('ddb-table-preview');
-          void showDialog({ title: result.title, body, buttons: [Dialog.okButton({ label: '关闭' })] });
+          showTablePreview(result, rendermime);
         }
       };
       model.previewReady.connect(preview);
       const toolbar = createNotebookToolbar(model, () => insert(panel), () => workspace.sync(true));
       toolbar.addClass('ddb-notebook-header');
       panel.contentHeader.addWidget(toolbar);
-      const unbind = new Map<object, () => void>();
+      const unbind = new Map<CodeEditor.IModel, () => void>();
       const highlight = () => {
         for (const cell of panel.content.widgets) {
-          if (cell.model.type !== 'code' || !cell.editor) { continue; }
+          if (cell.model.type !== 'code') { continue; }
+          // Cell models are editor models even before Jupyter renders the editor.
+          // Bind now so virtualized/offscreen cells are highlighted on first display.
           const ddb = /^%%ddb(?:\s|$)/.test(cell.model.sharedModel.getSource());
-          if (ddb) { cell.editor.model.mimeType = DOS_MIME; }
-          else if (cell.editor.model.mimeType === DOS_MIME) { cell.editor.model.mimeType = 'text/x-ipython'; }
-          if (!unbind.has(cell.editor.model)) {
-            unbind.set(cell.editor.model, languageEditors.bind(cell.editor.model, {
+          if (ddb) { cell.model.mimeType = DOS_MIME; }
+          else if (cell.model.mimeType === DOS_MIME) { cell.model.mimeType = 'text/x-ipython'; }
+          if (!unbind.has(cell.model)) {
+            unbind.set(cell.model, languageEditors.bind(cell.model, {
               path: () => panel.context.path, source: () => cell.model.sharedModel.getSource(),
               project: (source, offset) => {
                 const cells = panel.content.widgets;
@@ -119,12 +124,15 @@ export default {
             }));
           }
         }
-        const current = new Set(panel.content.widgets.map(cell => cell.editor?.model));
-        for (const [editor, dispose] of unbind) { if (!current.has(editor as never)) { dispose(); unbind.delete(editor); } }
+        const current = new Set<CodeEditor.IModel>(panel.content.widgets.filter(cell => cell.model.type === 'code').map(cell => cell.model));
+        for (const [editor, dispose] of unbind) { if (!current.has(editor)) { dispose(); unbind.delete(editor); } }
       };
       void panel.context.ready.then(() => {
         if (panel.isDisposed) { return; }
         panel.content.model?.contentChanged.connect(highlight);
+        // Kernel language_info resets every code cell's MIME type. Reapply DDB
+        // after Jupyter's metadata handler, including during notebook restoration.
+        panel.content.model?.metadataChanged.connect(highlight);
         panel.content.activeCellChanged.connect(highlight);
         highlight();
         workspace.sync();
@@ -134,6 +142,7 @@ export default {
         model.previewReady.disconnect(preview);
         for (const dispose of unbind.values()) { dispose(); }
         panel.content.model?.contentChanged.disconnect(highlight);
+        panel.content.model?.metadataChanged.disconnect(highlight);
         panel.content.activeCellChanged.disconnect(highlight);
       });
     };

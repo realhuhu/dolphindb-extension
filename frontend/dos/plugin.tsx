@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
 import { ILabShell } from '@jupyterlab/application';
-import { ICommandPalette, InputDialog, ReactWidget, showDialog } from '@jupyterlab/apputils';
+import { ICommandPalette, InputDialog, ReactWidget, showDialog, showErrorMessage } from '@jupyterlab/apputils';
 import { IEditorLanguageRegistry } from '@jupyterlab/codemirror';
 import { IDocumentManager } from '@jupyterlab/docmanager';
 import { IDocumentWidget } from '@jupyterlab/docregistry';
@@ -10,8 +10,8 @@ import { FileEditor, IEditorTracker } from '@jupyterlab/fileeditor';
 import { ILauncher } from '@jupyterlab/launcher';
 import { IRunningSessionManagers } from '@jupyterlab/running';
 import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
-import { LabIcon } from '@jupyterlab/ui-components';
 import { DisposableDelegate } from '@lumino/disposable';
+import { Signal } from '@lumino/signaling';
 import { BoxPanel, SplitPanel, StackedLayout } from '@lumino/widgets';
 import { IConnectionModel } from '../tokens';
 import type { ConnectionModel } from '../model';
@@ -25,8 +25,10 @@ import { createDosToolbar, OutputPanel } from './views';
 import { registerDdbRenderer } from './output';
 import { ISessionWorkspace, type SessionWorkspace } from '../session/workspace';
 import { captureVariableInsertion } from '../session/interactions';
+import { showTablePreview } from '../session/preview';
+import { NotebookSessions } from '../notebook/sessions';
+import { dosIcon as DOS_ICON, notebookIcon } from '../icons';
 
-const DOS_ICON = new LabIcon({ name: 'dolphindb-extension:dos', svgstr: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path class="jp-icon3" fill="#616161" d="M5 2h9l5 5v15H5zm9 2v5h5L14 4zM7 12v6h3c3 0 3-6 0-6zm2 2h1c1 0 1 2 0 2H9zm5-2h-2v6h2c4 0 4-6 0-6zm0 2c2 0 2 2 0 2z"/></svg>' });
 const prefix = 'dolphindb-extension:';
 type EditorWidget = IDocumentWidget<FileEditor>;
 
@@ -114,6 +116,10 @@ export default {
         models.set(widget, model);
         model.open();
         const isCurrent = () => !widget.isDisposed && app.shell.currentWidget === widget;
+        const preview = (_sender: DosModel, result: Parameters<typeof showTablePreview>[0]) => {
+          if (isCurrent()) { showTablePreview(result, rendermime); }
+        };
+        model.previewReady.connect(preview);
         const workspaceBinding = workspace.register(widget, {
           model, path: () => context.path, scope: 'file', isCurrent,
           identity: () => `${model.profile?.id}:${model.session?.id ?? 'preview'}:${model.session?.executionCount ?? 0}`,
@@ -131,6 +137,21 @@ export default {
         output.addClass('ddb-output-widget');
         split.addWidget(output);
         split.setRelativeSizes([0.7, 0.3]);
+        let collapsed = false;
+        let expandedSizes = [0.7, 0.3];
+        const resizeOutput = () => {
+          if (collapsed === model.folding.collapsed) { return; }
+          collapsed = model.folding.collapsed;
+          if (collapsed) {
+            const sizes = split.relativeSizes();
+            if (sizes[1] > 0) { expandedSizes = sizes; }
+          }
+          output.toggleClass('ddb-mod-collapsed', collapsed);
+          split.fit();
+          if (!collapsed) { split.setRelativeSizes(expandedSizes); }
+        };
+        model.changed.connect(resizeOutput);
+        resizeOutput();
         layout.addWidget(split);
         const toolbar = createDosToolbar({ model, runFile: () => runFile(widget), runSelection: () => runSelection(widget), batch, showWorkspace: () => workspace.sync(true) });
         toolbar.addClass('ddb-toolbar-widget');
@@ -150,6 +171,8 @@ export default {
         });
         return new DisposableDelegate(() => {
           unbindLanguage();
+          model.previewReady.disconnect(preview);
+          model.changed.disconnect(resizeOutput);
           context.pathChanged.disconnect(renamed);
           models.delete(widget);
           model.closeView();
@@ -181,21 +204,36 @@ export default {
     app.contextMenu.addItem({ command: prefix + 'batch-dos', selector: '.jp-DirListing-item[data-file-type="dolphindb"]', rank: 91 });
     app.contextMenu.addItem({ command: prefix + 'run-selection', selector: '.ddb-dos-editor .cm-content', rank: 1 });
     app.contextMenu.addItem({ command: prefix + 'run-dos', selector: '.ddb-dos-editor .cm-content', rank: 2 });
+    const notebookSessions = running ? new NotebookSessions(app.serviceManager) : null;
+    const runningChanged = new Signal<object, void>(manager);
+    manager.changed.connect(() => runningChanged.emit());
+    notebookSessions?.changed.connect(() => runningChanged.emit());
+    const reportError = (action: Promise<unknown>) => { void action.catch(error => showErrorMessage('关闭 DDB 会话失败', error)); };
     running?.add({
-      name: 'DolphinDB DOS 会话',
-      runningChanged: manager.changed,
-      running: () => manager.sessions.filter(s => s.locked).map(session => ({
+      name: 'DolphinDB 会话',
+      runningChanged,
+      running: () => [...manager.sessions.filter(s => s.locked).map(session => ({
         icon: () => DOS_ICON,
         label: () => session.path.split('/').pop()!,
         labelTitle: () => `${session.path}\n${session.profile.name} · ${session.state}`,
         detail: () => `${session.profile.name} · ${session.state === 'busy' ? '运行中' : session.state === 'disconnected' ? '已断开' : '空闲'}`,
         open: () => { documents.openOrReveal(session.path, 'Editor'); },
-        shutdown: () => { void manager.shutdown(session.id); },
-      })),
-      refreshRunning: () => { void manager.refresh(); },
-      shutdownAll: () => { void Promise.all(manager.sessions.filter(s => s.locked).map(s => manager.shutdown(s.id))); },
-      shutdownLabel: '关闭会话', shutdownAllLabel: '关闭所有 DOS 会话',
-      shutdownAllConfirmationText: '关闭所有 DOS 会话？会话变量将被释放，DOS 文件内容会保留。',
+        shutdown: () => reportError(manager.shutdown(session.id)),
+      })), ...(notebookSessions?.sessions ?? []).map(session => ({
+        icon: () => notebookIcon,
+        label: () => session.paths.map(path => path.split('/').pop()!).join(', '),
+        labelTitle: () => `${session.paths.join('\n')}\n${session.state?.profile?.name ?? 'DolphinDB'} · Python 内核 ${session.kernel.id}`,
+        detail: () => `${session.state?.profile?.name ?? 'DolphinDB'} · ${session.closing ? '正在关闭' : session.kernel.connectionStatus !== 'connected' ? '已断开' : session.state?.busy ? '运行中' : '空闲'} · Notebook`,
+        open: () => { documents.openOrReveal(session.paths[0], 'Notebook'); },
+        shutdown: session.closing ? undefined : () => reportError(notebookSessions!.shutdown(session.kernel.id)),
+      }))],
+      refreshRunning: () => { void manager.refresh(); void notebookSessions?.refresh().catch(() => {}); },
+      shutdownAll: () => reportError(Promise.all([
+        ...manager.sessions.filter(s => s.locked).map(s => manager.shutdown(s.id)),
+        ...(notebookSessions?.sessions ?? []).map(s => notebookSessions!.shutdown(s.kernel.id)),
+      ])),
+      shutdownLabel: '关闭 DDB 会话', shutdownAllLabel: '关闭所有 DDB 会话',
+      shutdownAllConfirmationText: '关闭所有 DolphinDB 会话？DDB 会话变量将被释放，文件、Notebook 内容和 Python 内核及变量会保留。正在执行的 Notebook 将在当前代码结束后关闭 DDB 会话。',
     });
     return manager;
   },

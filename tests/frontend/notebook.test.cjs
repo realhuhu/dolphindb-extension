@@ -296,6 +296,41 @@ const workspace = name => ({ databases: [{ path: `dfs://${name}`, tables: ['pric
   variables: [{ name, type: 'INT', form: 'SCALAR', rows: 1, columns: 1, bytes: '4', value: '7' }],
   databaseError: null, variablesError: null });
 
+test('notebook variable hover uses the metadata comm and rejects stale replies after execution or closing', async () => {
+  for (const change of ['none', 'run', 'close', 'refresh']) {
+    const f = fixture({ current: kernel({ state: { profile: profile('default'), locked: true } }) }); await tick();
+    f.model.variables = workspace('counter').variables;
+    const pending = deferred(), calls = [];
+    f.model.metadata = (operation, args) => { calls.push([operation, args.name]); return pending.promise; };
+    const request = f.model.previewVariable('counter');
+    const checked = change === 'none' ? request : assert.rejects(request, /会话已变化/);
+    if (change === 'run') { f.current.comms[0].emit({ busy: true }); f.current.comms[0].emit({ busy: false }); }
+    if (change === 'close') { f.current.comms[0].emit({ locked: false }); }
+    if (change === 'refresh') { f.model.variables = workspace('counter').variables; }
+    const value = { columns: ['键', '值'], rows: [['counter', '42']], totalRows: 1 };
+    pending.resolve(value);
+    if (change === 'none') { assert.equal(await checked, value); } else { await checked; }
+    assert.deepEqual(calls, [['variablePreview', 'counter']]);
+    assert.equal(f.current.executions.length, 1, 'hover must not send execute_request or write Python history');
+    f.model.dispose();
+  }
+});
+
+test('notebook table schema uses metadata before and after execution and rejects changed connections', async () => {
+  for (const locked of [false, true]) {
+    const f = fixture({ current: kernel({ state: { profile: profile('default'), locked } }) }); await tick();
+    const value = { columns: ['name', 'typeString'], rows: [['id', 'INT']], totalRows: 1 };
+    const pending = deferred(), calls = [];
+    f.model.metadata = (operation, args) => { calls.push([operation, args.database, args.table]); return calls.length === 1 ? Promise.resolve(value) : pending.promise; };
+    assert.equal(await f.model.previewTableSchema('dfs://market', 'prices'), value);
+    assert.equal(f.model.locked, locked); assert.equal(f.current.executions.length, 1);
+    assert.deepEqual(calls[0], ['tableSchema', 'dfs://market', 'prices']);
+    const response = assert.rejects(f.model.previewTableSchema('dfs://market', 'prices'), /会话已变化/);
+    f.current.comms[0].emit({ profile: profile('other'), locked: false }); pending.resolve(value); await response;
+    f.model.dispose();
+  }
+});
+
 test('reconnecting refreshes panels even if the connection and lock state have not changed', async () => {
   const f = fixture({ current: kernel({ state: { profile: profile('default'), locked: true } }) }); await tick();
   let reads = 0;

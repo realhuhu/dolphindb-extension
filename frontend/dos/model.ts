@@ -3,7 +3,8 @@ import { DdbObj, urgent } from 'dolphindb/browser.js';
 import { request, type Profile, type SessionTicket } from '../api';
 import type { ConnectionModel } from '../model';
 import type { DdbConnection } from '../upstream/connection';
-import { displayValue, executeInSession, loadDatabases, loadVariables, openSdk, previewConnection, tablePreview, type DatabaseEntry, type DisplayValue, type VariableEntry } from './runtime';
+import { displayValue, executeInSession, loadDatabases, loadVariables, openSdk, previewConnection, tablePreview, tableSchema, variablePreview, type DatabaseEntry, type DisplayValue, type VariableEntry } from './runtime';
+import { OutputFolding } from './folding';
 
 export interface SessionInfo {
   id: string; path: string; profile: Profile; locked: boolean; attached: boolean;
@@ -18,8 +19,8 @@ export interface OutputEntry {
 }
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/([?&]token=)[^&\s]+/g, '$1[redacted]');
 
-function restoreRun(run: SavedRun): OutputEntry {
-  const output: OutputEntry = { id: String(run.id), label: `执行 ${run.id} · 第 ${run.line} 行`, status: run.status, prints: [] };
+function restoreRun(run: SavedRun, sessionId: string): OutputEntry {
+  const output: OutputEntry = { id: `${sessionId}:${run.id}`, label: `执行 ${run.id} · 第 ${run.line} 行`, status: run.status, prints: [] };
   for (const frame of run.frames) {
     try {
       const data = Uint8Array.from(atob(frame), c => c.charCodeAt(0));
@@ -38,6 +39,8 @@ function restoreRun(run: SavedRun): OutputEntry {
 
 export class DosModel {
   readonly changed = new Signal<this, void>(this);
+  readonly previewReady = new Signal<this, { title: string; value: DisplayValue }>(this);
+  readonly folding = new OutputFolding();
   session: SessionInfo | null = null;
   connection: DdbConnection | null = null;
   private preview: DdbConnection | null = null;
@@ -73,6 +76,27 @@ export class DosModel {
       : this.loading ? '连接中' : this.locked ? '会话就绪' : '尚未运行';
   }
   get sdk(): DdbConnection | null { return this.connection ?? this.preview; }
+
+  async previewVariable(name: string): Promise<DisplayValue> {
+    const connection = this.connection, sessionId = this.session?.id, executionCount = this.session?.executionCount, variables = this.variables;
+    if (!this.locked || this.executing || !connection || !variables.some(variable => variable.name === name)) {
+      throw new Error('变量预览暂不可用。');
+    }
+    const value = await variablePreview(connection.ddb, name);
+    if (this.connection !== connection || this.session?.id !== sessionId || this.session?.executionCount !== executionCount || this.variables !== variables || this.executing) {
+      throw new Error('DDB 会话已变化。');
+    }
+    return value;
+  }
+
+  async previewTableSchema(database: string, table: string): Promise<DisplayValue> {
+    const connection = this.sdk, generation = this.generation, executionCount = this.session?.executionCount, databases = this.databases;
+    if (!connection || this.executing || this.loading) { throw new Error('表结构暂不可用。'); }
+    const value = await tableSchema(connection, database, table);
+    if (connection !== this.sdk || generation !== this.generation || executionCount !== this.session?.executionCount
+      || databases !== this.databases || this.executing) { throw new Error('DDB 会话已变化。'); }
+    return value;
+  }
 
   open(): void {
     this.views++;
@@ -164,7 +188,7 @@ export class DosModel {
       const detail = await request<SessionInfo & { history: SavedRun[] }>(`dos-sessions/${session.id}`);
       this.session = detail;
       if (this.loadedHistory !== detail.executionCount) {
-        this.outputs = detail.history.map(restoreRun);
+        this.outputs = detail.history.map(run => restoreRun(run, session.id));
         this.loadedHistory = detail.executionCount;
       }
       if (detail.state === 'disconnected') { return; }
@@ -215,7 +239,7 @@ export class DosModel {
       const session = this.session!;
       session.locked = true;
       session.state = 'busy';
-      output = { id: `run-${Date.now()}`, label: `执行 ${session.executionCount + 1} · 第 ${line + 1} 行`, status: 'running', prints: [] };
+      output = { id: `${session.id}:${session.executionCount + 1}`, label: `执行 ${session.executionCount + 1} · 第 ${line + 1} 行`, status: 'running', prints: [] };
       this.outputs = [...this.outputs.slice(-19), output];
       this.changed.emit();
       output.value = displayValue(await executeInSession(this.connection!, code, line, text => {
@@ -269,7 +293,7 @@ export class DosModel {
     try {
       const value = await tablePreview(connection, database, table);
       if (connection !== this.sdk) { return; }
-      this.outputs = [...this.outputs.slice(-19), { id: `table-${Date.now()}`, label: `${table} · 前 100 行`, status: 'ok', prints: [], value }];
+      this.previewReady.emit({ title: `${table} · 前 100 行`, value });
     } catch (error) { this.notice = errorText(error); }
     this.changed.emit();
   }

@@ -1,6 +1,6 @@
 {
   "name": "dolphindb-extension",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Visual DolphinDB connection management for Jupyter",
   "license": "Apache-2.0",
   "private": true,
@@ -24,15 +24,15 @@
     "build": "tsc && jupyter-builder build .",
     "build:prod": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs tests/frontend/notebook.test.cjs tests/frontend/language.test.cjs tests/frontend/workspace.test.cjs tests/frontend/output.test.cjs"
+    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs tests/frontend/notebook.test.cjs tests/frontend/language.test.cjs tests/frontend/workspace.test.cjs tests/frontend/output.test.cjs tests/frontend/sessions.test.cjs"
   },
   "dependencies": {
-    "@jupyter/react-components": "^0.16.7",
     "@codemirror/autocomplete": "^6.18.0",
     "@codemirror/language": "^6.0.0",
     "@codemirror/lint": "^6.0.0",
     "@codemirror/state": "^6.0.0",
     "@codemirror/view": "^6.0.0",
+    "@jupyter/react-components": "^0.16.7",
     "@jupyterlab/application": "^4.2.0",
     "@jupyterlab/apputils": "^4.2.0",
     "@jupyterlab/codeeditor": "^4.2.0",
@@ -44,8 +44,8 @@
     "@jupyterlab/filebrowser": "^4.2.0",
     "@jupyterlab/fileeditor": "^4.2.0",
     "@jupyterlab/launcher": "^4.2.0",
-    "@jupyterlab/notebook": "^4.2.0",
     "@jupyterlab/nbformat": "^4.2.0",
+    "@jupyterlab/notebook": "^4.2.0",
     "@jupyterlab/outputarea": "^4.2.0",
     "@jupyterlab/rendermime": "^4.2.0",
     "@jupyterlab/running": "^4.2.0",
@@ -59,14 +59,19 @@
     "@lumino/signaling": "^2.1.6",
     "@lumino/widgets": "^2.3.0",
     "dolphindb": "3.1.41",
+    "lucide": "1.44.0",
     "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "vscode-languageserver-textdocument": "^1.0.12",
     "vscode-languageserver-types": "^3.17.5",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2",
     "xshell": "1.3.48"
   },
   "devDependencies": {
     "@jupyter/builder": "^1.2.0",
     "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.0",
     "typescript": "~5.9.3"
   },
   "jupyterlab": {
@@ -75,6 +80,7 @@
       "@jupyterlab/notebook-extension:cell-executor"
     ],
     "sharedPackages": {
+      "lucide": false,
       "vscode-languageserver-types": false,
       "vscode-languageserver-textdocument": false,
       "@codemirror/state": {

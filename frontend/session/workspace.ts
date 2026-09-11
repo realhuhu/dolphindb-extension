@@ -3,20 +3,22 @@ import { ILayoutRestorer } from '@jupyterlab/application';
 import { Token } from '@lumino/coreutils';
 import { DisposableDelegate } from '@lumino/disposable';
 import type { Widget } from '@lumino/widgets';
-import { LabIcon } from '@jupyterlab/ui-components';
+import { dataExplorerIcon } from '../icons';
 import { WorkspacePanel } from '../dos/views';
 import type { WorkspaceBinding } from './types';
 
 export class SessionWorkspace {
-  readonly panel = new WorkspacePanel();
+  readonly panel: WorkspacePanel;
   private bindings = new Map<Widget, WorkspaceBinding>();
   constructor(private app: JupyterFrontEnd) {
+    this.panel = new WorkspacePanel(app.shell.node);
     this.panel.id = 'dolphindb-document-workspace';
-    this.panel.title.icon = new LabIcon({ name: 'dolphindb-extension:workspace', svgstr: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g class="jp-icon3" fill="none" stroke="#616161" stroke-width="1.6"><ellipse cx="12" cy="5" rx="7.5" ry="3"/><path d="M4.5 5v7c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V5M4.5 12v7c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-7"/></g></svg>' });
+    this.panel.title.icon = dataExplorerIcon;
     this.panel.title.caption = 'DolphinDB 数据库与变量';
     this.panel.addClass('ddb-dos-workspace');
     app.shell.add(this.panel, 'right', { rank: 600 });
     app.shell.currentChanged?.connect(() => this.sync());
+    void app.restored.then(() => this.sync());
   }
   register(widget: Widget, binding: WorkspaceBinding): DisposableDelegate {
     this.bindings.set(widget, binding);

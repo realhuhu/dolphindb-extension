@@ -82,3 +82,37 @@ test('table ordering uses original SDK doubles, integers and decimals before dis
   assert.deepEqual(ranks(DdbType.double, Float64Array.of(2, 2, -1), 3), [1, 1, 0]);
   assert.deepEqual(ranks(DdbType.string, ['2', '10', '01', '11'], 4), [3, 1, 0, 2]);
 });
+
+test('variable previews keep SDK grids, matrix orientation, exact integers and bounded dimensions', async () => {
+  const sdk = await import('dolphindb/browser.js');
+  const { DdbObj, DdbForm, DdbType } = sdk;
+  const load = (path, modules = {}) => {
+    const module = { exports: {}, require: id => modules[id] ?? sdk };
+    vm.runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../frontend/' + path), 'utf8'),
+      { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, module);
+    return module.exports;
+  };
+  const { variableDisplayValue } = load('dos/runtime.ts', { './table': load('dos/table.ts'), '../session/variables': load('session/variables.ts') });
+  const vector = (type, value, extra = {}) => new DdbObj({ form: DdbForm.vector, type, value, rows: value.length, ...extra });
+  const values = BigInt64Array.of(9007199254740993n, 9007199254740992n, -10n);
+  for (const form of [DdbForm.vector, DdbForm.set, DdbForm.pair]) {
+    const value = plain(variableDisplayValue(vector(DdbType.long, values, { form })));
+    assert.deepEqual(value.columns, ['索引', '值']);
+    assert.deepEqual(value.rows, [['0', '9007199254740993'], ['1', '9007199254740992'], ['2', '-10']]);
+    assert.deepEqual(value.sortRanks[1], [2, 1, 0]);
+  }
+  const dict = plain(variableDisplayValue(new DdbObj({ form: DdbForm.dict, type: DdbType.int, value: [
+    vector(DdbType.string, ['alpha', 'beta']), vector(DdbType.int, Int32Array.of(1, 2)),
+  ] })));
+  assert.deepEqual(dict.columns, ['键', '值']); assert.deepEqual(dict.rows, [['alpha', '1'], ['beta', '2']]);
+  const matrix = plain(variableDisplayValue(new DdbObj({ form: DdbForm.matrix, type: DdbType.int, rows: 2, cols: 2,
+    value: { data: Int32Array.of(1, 2, 3, 4), rows: vector(DdbType.string, ['a', 'b']), cols: vector(DdbType.string, ['x', 'y']) } })));
+  assert.deepEqual(matrix.columns, ['索引', 'x', 'y']); assert.deepEqual(matrix.rows, [['a', '1', '3'], ['b', '2', '4']]);
+  const table = plain(variableDisplayValue(new DdbObj({ form: DdbForm.table, rows: 100,
+    value: Array.from({ length: 12 }, (_, index) => vector(DdbType.int, Int32Array.from({ length: 100 }, (_, row) => row), { name: 'c' + index })) })));
+  assert.equal(table.rows.length, 10); assert.equal(table.columns.length, 8);
+  assert.equal(table.totalRows, 100); assert.equal(table.totalColumns, 12);
+  const empty = plain(variableDisplayValue(vector(DdbType.int, new Int32Array())));
+  assert.deepEqual(empty.rows, []); assert.equal(empty.totalRows, 0);
+  assert.deepEqual(plain(variableDisplayValue(new DdbObj({ form: DdbForm.scalar, type: DdbType.long, value: 9007199254740993n }))), { text: '9007199254740993' });
+});

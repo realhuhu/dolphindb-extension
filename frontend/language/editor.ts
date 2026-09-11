@@ -2,18 +2,20 @@ import { autocompletion, completionKeymap, acceptCompletion, startCompletion, sn
 import { StateEffect, StateField, Prec, type Extension } from '@codemirror/state';
 import { EditorView, ViewPlugin, Decoration, hoverTooltip, keymap, showTooltip, type DecorationSet, type Tooltip } from '@codemirror/view';
 import { linter } from '@codemirror/lint';
-import { highlightTree, tagHighlighter, tags } from '@lezer/highlight';
+import { highlightTree } from '@lezer/highlight';
+import type { LanguageSupport } from '@codemirror/language';
 import type { CodeEditor } from '@jupyterlab/codeeditor';
 import { MimeModel, type IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { CompletionItemKind, InsertTextFormat, type CompletionItem } from 'vscode-languageserver-types';
 import type { SettingsModel } from '../settings';
-import { languageSupport } from '../dos/language';
+import { tokenClasses } from './highlight';
 import { ddbRegions } from './regions';
 import { documentation, type LanguageEngine } from './engine';
 import type { LanguageBinding, Projection } from './contracts';
 
 const signatureEffect = StateEffect.define<Tooltip | null>();
+const bindingEffect = StateEffect.define<null>();
 const signatureField = StateField.define<Tooltip | null>({
   create: () => null,
   update(value, transaction) {
@@ -23,12 +25,6 @@ const signatureField = StateField.define<Tooltip | null>({
   },
   provide: field => showTooltip.from(field),
 });
-const tokenClasses = tagHighlighter([
-  { tag: tags.keyword, class: 'ddb-token-keyword' }, { tag: tags.string, class: 'ddb-token-string' },
-  { tag: tags.number, class: 'ddb-token-number' }, { tag: tags.comment, class: 'ddb-token-comment' },
-  { tag: tags.function(tags.variableName), class: 'ddb-token-function' }, { tag: tags.atom, class: 'ddb-token-constant' },
-]);
-const parser = languageSupport().language.parser;
 const kindNames: Record<number, string> = {
   [CompletionItemKind.Function]: 'function', [CompletionItemKind.Variable]: 'variable',
   [CompletionItemKind.Field]: 'property', [CompletionItemKind.Keyword]: 'keyword',
@@ -41,13 +37,21 @@ export class LanguageEditors {
   private bindings = new WeakMap<CodeEditor.IModel, LanguageBinding>();
   private views = new WeakMap<CodeEditor.IModel, EditorView>();
   active: { model: CodeEditor.IModel; view: EditorView } | null = null;
-  constructor(readonly engine: LanguageEngine, readonly settings: SettingsModel, private rendermime: IRenderMimeRegistry) {}
+  constructor(readonly engine: LanguageEngine, readonly settings: SettingsModel, private rendermime: IRenderMimeRegistry, private language: LanguageSupport) {}
   bind(model: CodeEditor.IModel, binding: LanguageBinding): () => void {
     this.bindings.set(model, binding);
     if (binding.path().toLowerCase().endsWith('.dos')) { this.engine.modules.open.set(model, binding); }
+    this.refreshBinding(model);
     return () => {
-      if (this.bindings.get(model) === binding) { this.bindings.delete(model); this.engine.modules.open.delete(model); }
+      if (this.bindings.get(model) === binding) {
+        this.bindings.delete(model); this.engine.modules.open.delete(model); this.refreshBinding(model);
+      }
     };
+  }
+  private refreshBinding(model: CodeEditor.IModel) {
+    // Notebook cells can be bound after their editor is created. Defer to avoid
+    // dispatching during a shared-model/editor update, including on unbind.
+    queueMicrotask(() => this.views.get(model)?.dispatch({ effects: bindingEffect.of(null) }));
   }
   private current(model: CodeEditor.IModel, source: string, offset: number) {
     const binding = this.bindings.get(model);
@@ -149,10 +153,12 @@ export class LanguageEditors {
       } } satisfies Tooltip;
     };
     const decorations = (view: EditorView): DecorationSet => {
+      // Use the current text: Jupyter updates the MIME type after this view update
+      // when a user edits %%ddb into %ddb (or vice versa).
       if (!owner.bindings.has(model)) { return Decoration.none; }
       const text = view.state.doc.toString(), marks: { from: number; to: number; value: Decoration }[] = [];
       for (const region of ddbRegions(text).filter(r => r.kind === 'line')) {
-        highlightTree(parser.parse(text.slice(region.from, region.to)), tokenClasses, (from, to, classes) => {
+        highlightTree(owner.language.language.parser.parse(text.slice(region.from, region.to)), tokenClasses, (from, to, classes) => {
           marks.push({ from: region.from + from, to: region.from + to, value: Decoration.mark({ class: classes }) });
         });
       }
@@ -192,15 +198,19 @@ export class LanguageEditors {
           severity: 'warning' as const, message: typeof diagnostic.message === 'string' ? diagnostic.message : diagnostic.message.value,
         })).filter(d => d.from >= 0 && d.to <= text.length);
       }, { delay: 750 }),
-      ViewPlugin.fromClass(class {
+      // Higher-precedence marks are innermost, so Python syntax colors cannot
+      // override a DDB token within a %ddb line.
+      Prec.highest(ViewPlugin.fromClass(class {
         decorations: DecorationSet;
         timer: ReturnType<typeof setTimeout> | undefined;
         generation = 0;
         constructor(readonly view: EditorView) { owner.views.set(model, view); this.decorations = decorations(view); }
         update(update: import('@codemirror/view').ViewUpdate) {
           if (update.view.hasFocus) { owner.active = { model, view: update.view }; }
-          if (update.docChanged || update.selectionSet || update.focusChanged) {
+          if (update.docChanged || update.transactions.some(tr => tr.effects.some(effect => effect.is(bindingEffect)))) {
             this.decorations = decorations(update.view);
+          }
+          if (update.docChanged || update.selectionSet || update.focusChanged) {
             const generation = ++this.generation;
             clearTimeout(this.timer);
             this.timer = setTimeout(() => { void signature(this.view).then(value => {
@@ -209,7 +219,7 @@ export class LanguageEditors {
           }
         }
         destroy() { this.generation++; clearTimeout(this.timer); owner.views.delete(model); if (owner.active?.view === this.view) { owner.active = null; } }
-      }, { decorations: plugin => plugin.decorations }),
+      }, { decorations: plugin => plugin.decorations })),
     ];
   }
 }

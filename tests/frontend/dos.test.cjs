@@ -12,6 +12,9 @@ const compiled = ts.transpileModule(
   readFileSync(resolve(__dirname, '../../frontend/dos/model.ts'), 'utf8'),
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }
 ).outputText;
+const folding = { exports: {} };
+vm.runInNewContext(ts.transpileModule(readFileSync(resolve(__dirname, '../../frontend/dos/folding.ts'), 'utf8'),
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, folding);
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
@@ -22,7 +25,7 @@ function deferred() {
 function profile(id, name) {
   return { id, name, host: 'localhost', port: 8848, username: 'user', ssl: false, timeout: 10, rememberPassword: false, hasPassword: false };
 }
-function fixture({ sessions = [], metadata = async () => [], connect, connectionReady = Promise.resolve() } = {}) {
+function fixture({ sessions = [], metadata = async () => [], connect, connectionReady = Promise.resolve(), tablePreview = async () => ({ kind: 'table', columns: [], rows: [] }), variablePreview = async () => ({ text: '42' }), tableSchema = async () => ({ columns: [], rows: [] }) } = {}) {
   const profiles = [profile('default', 'Default'), profile('other', 'Other')];
   const previews = [], requests = [], attachments = [];
   const connections = {
@@ -42,6 +45,9 @@ function fixture({ sessions = [], metadata = async () => [], connect, connection
     },
     loadDatabases: metadata,
     loadVariables: async () => [],
+    tablePreview,
+    variablePreview,
+    tableSchema,
     openSdk: async ticket => { attachments.push(ticket); return sdk('session'); },
   };
   const api = { request: async path => {
@@ -51,7 +57,7 @@ function fixture({ sessions = [], metadata = async () => [], connect, connection
     assert.ok(session, `Unexpected API path: ${path}`);
     return path.endsWith('/attach') ? { path: `${path}/ws` } : { ...session, history: [] };
   } };
-  const modules = { '@lumino/signaling': { Signal }, 'dolphindb/browser.js': {}, '../api': api, './runtime': runtime };
+  const modules = { '@lumino/signaling': { Signal }, 'dolphindb/browser.js': {}, '../api': api, './runtime': runtime, './folding': folding.exports };
   const sandbox = {
     exports: {}, require: id => {
       assert.ok(Object.hasOwn(modules, id), `Unexpected model import: ${id}`);
@@ -63,6 +69,100 @@ function fixture({ sessions = [], metadata = async () => [], connect, connection
   const manager = new sandbox.exports.DosManager(connections);
   return { manager, connections, profiles, previews, requests, attachments };
 }
+
+test('output folding preserves old entries on prints/new runs, and collapse-all applies to future entries', () => {
+  const state = new folding.exports.OutputFolding();
+  assert.equal(state.expanded('session:1'), true);
+  state.setExpanded('session:1', false);
+  state.retain(['session:1', 'session:2']);
+  assert.equal(state.expanded('session:1'), false);
+  assert.equal(state.expanded('session:2'), true);
+  state.collapsed = true;
+  state.setAll(false);
+  assert.equal(state.expanded('session:2'), false);
+  assert.equal(state.expanded('session:3'), false);
+  state.setExpanded('session:2', true);
+  assert.equal(state.expanded('session:2'), true);
+  assert.equal(state.expanded('session:3'), false);
+  assert.equal(state.collapsed, true, 'entry changes cannot reopen the whole panel');
+  state.setAll(true);
+  state.setExpanded('session:1', false);
+  state.retain(['session:2', 'session:3']);
+  assert.equal(state.expanded('new-session:1'), true, 'a new session cannot inherit a previous run ID');
+});
+
+test('table preview opens a dialog signal without adding output or locking the connection', async () => {
+  const value = { kind: 'table', columns: ['id'], rows: [[1]] }, calls = [];
+  const f = fixture({ tablePreview: async (_sdk, ...args) => { calls.push(args); return value; } });
+  await f.manager.ready;
+  const model = f.manager.document('table.dos'); model.open(); await model.initialize();
+  const previews = []; model.previewReady.connect((_sender, result) => previews.push(result));
+  await model.inspectTable('dfs://test', 'prices');
+  assert.deepEqual(calls, [['dfs://test', 'prices']]);
+  assert.equal(previews[0].value, value);
+  assert.equal(model.outputs.length, 0); assert.equal(model.locked, false);
+  model.folding.collapsed = true;
+  model.closeView(); model.open(); await model.initialize();
+  assert.equal(model.folding.collapsed, true, 'reopening the editor preserves its fold preference');
+  model.closeView();
+});
+
+test('a delayed table preview from a previous connection cannot open a dialog', async () => {
+  const pending = deferred();
+  const f = fixture({ tablePreview: () => pending.promise }); await f.manager.ready;
+  const model = f.manager.document('table.dos'); model.open(); await model.initialize();
+  let previews = 0; model.previewReady.connect(() => previews++);
+  const request = model.inspectTable('dfs://test', 'prices');
+  await model.select('other'); pending.resolve({}); await request;
+  assert.equal(previews, 0); model.closeView();
+});
+
+test('table schema hover uses the selected preview without locking or adding execution results', async () => {
+  const pending = deferred(), calls = [];
+  const value = { columns: ['name', 'typeString'], rows: [['price', 'DOUBLE']], totalRows: 1 };
+  const f = fixture({ tableSchema: async (sdk, database, table) => { calls.push([sdk, database, table]); return calls.length === 1 ? value : pending.promise; } });
+  await f.manager.ready;
+  const model = f.manager.document('schema.dos'); model.open(); await model.initialize();
+  assert.equal(await model.previewTableSchema('dfs://test', 'prices'), value);
+  assert.equal(calls[0][0], model.sdk); assert.deepEqual(calls[0].slice(1), ['dfs://test', 'prices']);
+  assert.equal(model.locked, false); assert.equal(model.outputs.length, 0); assert.equal(model.session, null);
+  const response = assert.rejects(model.previewTableSchema('dfs://test', 'prices'), /会话已变化/);
+  await model.select('other'); pending.resolve(value); await response;
+  assert.equal(model.notice, null); assert.equal(model.outputs.length, 0);
+  model.busy = true; await assert.rejects(model.previewTableSchema('dfs://test', 'prices'), /暂不可用/);
+  model.closeView();
+});
+
+test('variable hover uses only the owning DOS session and does not append an execution result', async () => {
+  const calls = [];
+  const session = { id: 'saved', path: 'variables.dos', profile: profile('default', 'Default'), locked: true, state: 'idle', executionCount: 1 };
+  const value = { columns: ['id', 'value'], rows: [['1', '42']], totalRows: 1 };
+  const f = fixture({ sessions: [session], variablePreview: async (ddb, name) => { calls.push([ddb, name]); return value; } });
+  await f.manager.ready;
+  const model = f.manager.document(session.path); model.open(); await model.initialize();
+  model.variables = [{ name: 'counter' }];
+  assert.equal(await model.previewVariable('counter'), value);
+  assert.equal(calls[0][0], model.connection.ddb); assert.equal(calls[0][1], 'counter');
+  assert.equal(model.outputs.length, 0); assert.equal(model.session.executionCount, 1);
+  await assert.rejects(model.previewVariable('missing'), /暂不可用/);
+  model.busy = true; await assert.rejects(model.previewVariable('counter'), /暂不可用/);
+  assert.equal(calls.length, 1);
+  model.closeView();
+});
+
+test('variable hover discards a reply when the DOS session or its variables change', async () => {
+  for (const change of ['session', 'variables', 'run']) {
+    const pending = deferred();
+    const session = { id: 'saved', path: 'variables.dos', profile: profile('default', 'Default'), locked: true, state: 'idle', executionCount: 1 };
+    const f = fixture({ sessions: [session], variablePreview: () => pending.promise }); await f.manager.ready;
+    const model = f.manager.document(session.path); model.open(); await model.initialize(); model.variables = [{ name: 'counter' }];
+    const response = assert.rejects(model.previewVariable('counter'), /会话已变化/);
+    if (change === 'session') { model.session = { ...session, id: 'new' }; }
+    if (change === 'variables') { model.variables = [{ name: 'counter' }]; }
+    if (change === 'run') { model.session = { ...session, executionCount: 2 }; }
+    pending.resolve('old value'); await response; model.closeView();
+  }
+});
 
 test('batch connection lookup uses the retained session without opening a preview or attaching', async () => {
   const frozen = profile('removed', 'Original session connection');

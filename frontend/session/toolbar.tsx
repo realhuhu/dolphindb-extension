@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { Dialog, ReactWidget, showDialog, showErrorMessage } from '@jupyterlab/apputils';
-import { circleEmptyIcon, circleIcon, HTMLSelect, listIcon, ReactiveToolbar, Toolbar, ToolbarButton, type LabIcon } from '@jupyterlab/ui-components';
+import { HTMLSelect, ReactiveToolbar, Toolbar, ToolbarButton, type LabIcon } from '@jupyterlab/ui-components';
 import type { ISignal } from '@lumino/signaling';
 import { Widget } from '@lumino/widgets';
+import { idleIcon, readyIcon, busyIcon, workspaceIcon } from '../icons';
 
 type ProfileOption = { id: string; name: string };
 export interface SessionControlsState {
@@ -37,9 +38,9 @@ class ConnectionPicker extends ReactWidget {
   render(): React.ReactElement {
     const state = this.state();
     const missing = state.profile && !state.profiles.some(profile => profile.id === state.profile!.id);
-    const icon = state.busy || state.locked ? circleIcon : circleEmptyIcon;
+    const icon = state.busy ? busyIcon : state.locked ? readyIcon : idleIcon;
     return <>
-      <icon.react className="jp-Toolbar-kernelStatus" width="16" height="16"/>
+      <icon.react className="jp-Toolbar-kernelStatus" elementSize="normal"/>
       <HTMLSelect aria-label={state.label} title={state.locked ? '连接已固定。关闭会话后可重新选择。' : '首次运行前可切换连接。'}
         value={state.selection} disabled={state.disabled} onChange={event => this.select(event.target.value)}
         options={[{ value: '', label: '默认连接' + (state.defaultProfile ? ' · ' + state.defaultProfile.name : '') },
@@ -76,7 +77,7 @@ export class SessionToolbar extends ReactiveToolbar {
     this.addItem('status', this.status);
     this.closeButton = new ToolbarButton({ label: '关闭会话', tooltip: '释放当前 DolphinDB 会话的变量，允许重新选择连接', onClick: () => void this.closeSession() });
     this.addItem('shutdown', this.closeButton);
-    this.addItem('workspace', new ToolbarButton({ icon: listIcon, tooltip: '显示数据库与变量', onClick: () => options.state().showWorkspace() }));
+    this.addItem('workspace', new ToolbarButton({ icon: workspaceIcon, tooltip: '显示数据库与变量', onClick: () => options.state().showWorkspace() }));
     options.changed.connect(this.refresh, this);
     this.refresh();
   }

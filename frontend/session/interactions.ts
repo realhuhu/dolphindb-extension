@@ -1,5 +1,9 @@
 import type { CodeEditor } from '@jupyterlab/codeeditor';
 
+export function loadTableExpression(database: string, table: string): string {
+  return `loadTable(${JSON.stringify(database)}, ${JSON.stringify(table)})`;
+}
+
 /** Coalesce repeated clicks and allow only one request per action at a time. */
 export class DebouncedActions {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();

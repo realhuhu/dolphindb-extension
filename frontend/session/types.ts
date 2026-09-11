@@ -1,5 +1,5 @@
 import type { ISignal } from '@lumino/signaling';
-import type { DatabaseEntry, VariableEntry } from '../dos/runtime';
+import type { DatabaseEntry, VariableEntry, DisplayValue } from '../dos/runtime';
 
 /** Data always belongs to the document's execution session or pre-run preview. */
 export interface WorkspaceModel {
@@ -15,6 +15,8 @@ export interface WorkspaceModel {
   readonly variablesError: string | null;
   refreshPanels(): Promise<void>;
   inspectTable(database: string, table: string): Promise<void>;
+  previewVariable(name: string): Promise<DisplayValue>;
+  previewTableSchema(database: string, table: string): Promise<DisplayValue>;
   setPanelActive?(active: boolean): void;
 }
 

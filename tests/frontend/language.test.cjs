@@ -178,3 +178,191 @@ test('notebook analysis includes preceding DDB cells with the original cursor of
   const locations = await f.engine.definitions(f.binding, projected);
   assert.equal(locations[0].range.start.line, 1);
 });
+
+const { createDdbGrammar, createDdbLanguage, tokenClasses } = load('language/highlight.ts');
+const { highlightTree } = require('@lezer/highlight');
+const { EditorState } = require('@codemirror/state');
+const { ensureSyntaxTree } = require('@codemirror/language');
+const { Registry, INITIAL, parseRawGrammar } = require('vscode-textmate');
+const onig = require('vscode-oniguruma');
+
+// Relevant scope rules from VS Code's Light+ theme, including inherited Light rules.
+// An independent, themed TextMate tokenizer is the oracle for our CodeMirror adapter.
+const themeRules = [
+  [undefined, '#000000', 'plain'], ['comment', '#008000', 'comment'],
+  ['string', '#A31515', 'string'], ['constant.numeric', '#098658', 'number'],
+  ['constant.language', '#0000FF', 'constant'], ['punctuation.section.embedded', '#0000FF', 'constant'],
+  ['keyword', '#0000FF', 'constant'], ['keyword.operator', '#000000', 'operator'],
+  ['keyword.control', '#AF00DB', 'keyword'], ['entity.name.function', '#795E26', 'function'],
+  ['variable', '#001080', 'variable'], ['constant.character', '#EE0000', 'escape'],
+  ['invalid', '#CD3131', 'invalid'],
+];
+let highlighting;
+function highlighter() {
+  return highlighting ??= (async () => {
+    await onig.loadWASM(readFileSync(require.resolve('vscode-oniguruma/release/onig.wasm')));
+    const registry = new Registry({ onigLib: Promise.resolve(onig),
+      theme: { settings: themeRules.map(([scope, foreground]) => ({ scope, settings: { foreground } })) },
+      loadGrammar: async () => parseRawGrammar(JSON.stringify(require('dolphindb/language.js').tm_language), 'dolphindb.tmLanguage.json') });
+    const oracle = await registry.loadGrammar('source.dolphindb');
+    const support = createDdbLanguage(await createDdbGrammar(onig));
+    return { support, oracle, colors: registry.getColorMap() };
+  })();
+}
+function cmColors(source, tree, colors) {
+  const result = Array(source.length).fill(null);
+  highlightTree(tree, tokenClasses, (from, to, classes) => {
+    const category = classes.slice('ddb-token-'.length);
+    const color = colors ? themeRules.find(rule => rule[2] === category)[1] : category;
+    result.fill(color, from, to);
+  });
+  return result;
+}
+function vscodeColors(source, oracle, colors) {
+  const result = Array(source.length).fill(null);
+  let offset = 0, stack = INITIAL;
+  for (const line of source.split('\n')) {
+    const parsed = oracle.tokenizeLine2(line, stack);
+    stack = parsed.ruleStack;
+    for (let index = 0; index < parsed.tokens.length; index += 2) {
+      const from = offset + parsed.tokens[index];
+      const to = offset + (parsed.tokens[index + 2] ?? line.length);
+      // Standard VS Code encoded token metadata stores the foreground in bits 15–23.
+      const foreground = (parsed.tokens[index + 1] >>> 15) & 0x1ff;
+      result.fill(colors[foreground], from, to);
+    }
+    offset += line.length + 1;
+  }
+  return result;
+}
+
+test('DOS highlighting matches the upstream VS Code grammar and default theme by character', async () => {
+  const { support, oracle, colors } = await highlighter();
+  const source = [
+    '// 日期、类型、SQL、函数和属性；中文与 emoji 😀 不改变后续 token 的位置',
+    'module analytics::prices', 'use analytics', '@jit',
+    'def calc(x, y) { return sum(x) + y }',
+    'values = 1..10; scalars = [1h, 2l, 3c, 4f, 5.2F, 2.5e-10, 0b1010]',
+    'dates = [2026.09.11, 2026.09M, 2026.09.11T12:34:56.123456789, 12:34:56.123, 12:34m]',
+    'flags = [true, false, NULL, INT, DOUBLE, NULL_INT]',
+    'select sym, avg(price) as average from prices where price > 10 group by sym',
+    'prices.append!(table(1 as id)); analytics::calc(1, 2)',
+    'prices.price; prices.if; prices.true; $value; @obj.field',
+    'symbols = `AAPL`MSFT`a.b', 'escaped = "tab\\tquote\\\"newline\\n中文😀"',
+    "single = 'quote\\\'backslash\\\\'", 'mixed = "price #{calc(1, 2)} USD"',
+    '/* block begins', '', '  return sum(1..3) // still a comment', '*/ sum(4)',
+    'triple = """line one', '', '    line two \\t', '"""; loadTable("dfs://market", `ticks)',
+    'if (true) { x += 1; x && y || !z; x < y; x >> 2 }',
+    'bad = ...; valid = 1..3', '',
+  ].join('\n');
+  assert.deepEqual(cmColors(source, support.language.parser.parse(source), true), vscodeColors(source, oracle, colors));
+});
+
+test('DOS dates, escaped strings, function calls, and property keywords retain distinct styles', async () => {
+  const { support } = await highlighter();
+  for (const [source, checks] of [
+    ['select avg(price) from prices where price > 1', [['select', 'keyword'], ['avg', 'function'], ['price', 'plain'], ['>', 'operator'], ['1', 'number']]],
+    ['def add(x) { return x + 1 }', [['def', 'keyword'], ['add', 'function'], ['x', 'plain'], ['return', 'keyword']]],
+    ['2026.09.11T12:34:56.123456789', [['2026.09.11T12:34:56.123456789', 'number']]],
+    ['1..10', [['1', 'number'], ['..', 'operator'], ['10', 'number']]],
+    ['"hello\\nworld"', [['hello', 'string'], ['\\n', 'escape'], ['world', 'string']]],
+    ['prices.if; prices.true; true; NULL', [['if', 'variable'], ['prices.', 'plain'], ['true', 'variable'], ['NULL', 'constant']]],
+    ['obj.append!(1)', [['append!', 'function']]],
+  ]) {
+    const categories = cmColors(source, support.language.parser.parse(source));
+    for (const [text, category] of checks) {
+      const offset = source.indexOf(text);
+      assert.deepEqual(categories.slice(offset, offset + text.length), Array(text.length).fill(category), `${source}: ${text}`);
+    }
+  }
+});
+
+test('incremental DOS edits propagate multiline state without leaking between documents', async () => {
+  const { support, oracle, colors } = await highlighter();
+  let state = EditorState.create({ doc: Array.from({ length: 90 }, (_, i) => `x${i} = sum(1..3)`).join('\n'), extensions: [support] });
+  const check = () => {
+    const tree = ensureSyntaxTree(state, state.doc.length, 1000);
+    assert.ok(tree, 'incremental parse completes');
+    const source = state.doc.toString();
+    assert.deepEqual(cmColors(source, tree, true), vscodeColors(source, oracle, colors));
+  };
+  check();
+  state = state.update({ changes: { from: 0, insert: '/*\n\n' } }).state;
+  check();
+  state = state.update({ changes: { from: state.doc.line(46).from, insert: '*/\n' } }).state;
+  check();
+  state = state.update({ changes: { from: 0, to: 4, insert: '"""\n' } }).state;
+  check();
+  state = state.update({ changes: { from: state.doc.length, insert: '\n"""\nselect sum(x1) from prices' } }).state;
+  check();
+  const separate = 'select sum(1..3)';
+  assert.deepEqual(cmColors(separate, support.language.parser.parse(separate), true), vscodeColors(separate, oracle, colors));
+  state = state.update({ changes: { from: 0, to: state.doc.length, insert: separate } }).state;
+  check();
+});
+
+test('notebook DDB regions use the same grammar without styling Python code', async () => {
+  const { support, oracle, colors } = await highlighter();
+  const source = 'python = "select sum(1..3)"\nanswer = %ddb sum(1..3)\n# %ddb fake\n%ddb loadTable("dfs://market", `ticks)';
+  for (const region of ddbRegions(source)) {
+    const ddb = source.slice(region.from, region.to);
+    assert.deepEqual(cmColors(ddb, support.language.parser.parse(ddb), true), vscodeColors(ddb, oracle, colors));
+  }
+  assert.equal(ddbRegions(source).length, 2);
+  const cell = '%%ddb\n/* comment\n\nends */\nselect sum(1..3)';
+  assert.deepEqual(cmColors(cell, support.language.parser.parse(cell), true), vscodeColors(cell, oracle, colors));
+});
+
+test('notebook languages bind before editor rendering and survive kernel language metadata updates', async () => {
+  const { Signal } = require('@lumino/signaling');
+  const signal = () => new Signal({});
+  const cell = source => ({ editor: null, model: { type: 'code', mimeType: 'text/x-ipython', sharedModel: { getSource: () => source } } });
+  const block = cell('%%ddb\nsum(1..3)'), inline = cell('result = %ddb sum(1..3)');
+  const panel = {
+    context: { path: 'highlight.ipynb', ready: Promise.resolve() },
+    content: { widgets: [block, inline], model: { contentChanged: signal(), metadataChanged: signal() }, activeCellChanged: signal() },
+    contentHeader: { addWidget() {} }, disposed: signal(), isDisposed: false,
+  };
+  const connections = { loaded: true };
+  const model = { previewReady: signal() };
+  const bound = [], unbound = [];
+  const languageEditors = { bind: model => { bound.push(model); return () => unbound.push(model); } };
+  const modules = {
+    '@jupyterlab/apputils': {}, '@jupyterlab/codemirror': {}, '@jupyterlab/notebook': {},
+    '@jupyterlab/rendermime': {}, '@jupyterlab/docmanager': {}, '../tokens': {}, '../language/plugin': {},
+    '../dos/language': { DOS_MIME: 'text/x-dolphindb' },
+    './executor-plugin': { notebookConnection: () => model },
+    '../language/regions': { projection, projectDdb }, '../session/workspace': {},
+    '../session/toolbar': { SessionToolbar: class { addClass() {} } },
+    '../dos/output': { registerDdbRenderer() {} }, '../session/interactions': {}, '../session/preview': {},
+  };
+  const sandbox = { exports: {}, require: id => { assert.ok(id in modules, id); return modules[id]; } };
+  const code = ts.transpileModule(readFileSync(resolve(__dirname, '../../frontend/notebook/plugin.tsx'), 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  vm.runInNewContext(code, sandbox);
+  await sandbox.exports.default.activate({ shell: {}, commands: { addCommand() {} } }, connections,
+    { widgetAdded: signal(), forEach: callback => callback(panel) }, { findByMIME: () => true, getLanguage: async () => ({}) }, languageEditors, {},
+    { register: () => ({ dispose() {} }), sync() {} }, {}, null);
+  await Promise.resolve();
+  assert.deepEqual(bound, [block.model, inline.model], 'unrendered cells must be bound before focus or scrolling');
+  assert.equal(block.model.mimeType, 'text/x-dolphindb');
+  assert.equal(inline.model.mimeType, 'text/x-ipython');
+
+  // Jupyter restores the Python MIME for all code cells when the kernel reports language_info.
+  block.model.mimeType = 'text/x-ipython';
+  panel.content.model.metadataChanged.emit({ key: 'language_info' });
+  assert.equal(block.model.mimeType, 'text/x-dolphindb');
+  block.model.sharedModel.getSource = () => 'answer = %ddb sum(1..3)';
+  panel.content.model.contentChanged.emit();
+  assert.equal(block.model.mimeType, 'text/x-ipython');
+  assert.equal(bound.length, 2, 'language changes must reuse the existing document binding');
+
+  panel.content.widgets = [block];
+  panel.content.model.contentChanged.emit();
+  assert.deepEqual(unbound, [inline.model]);
+  panel.disposed.emit();
+  assert.deepEqual(unbound, [inline.model, block.model]);
+  panel.content.widgets = [cell('%%ddb\n1')];
+  panel.content.model.metadataChanged.emit({ key: 'language_info' });
+  assert.equal(bound.length, 2, 'disposed notebooks must disconnect the metadata listener');
+});

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0a4 - 2026-09-11
+
+- Insert `loadTable(...)` at the editor cursor when a database table is clicked; provide a separate preview button for its first 100 rows and a hover preview of its column definitions.
+- Group session variables by local/shared location and data form, showing counts, memory usage and type/shape summaries. Preserve group folding during refresh and expand matching groups while filtering.
+- Add bounded variable hover previews with sortable tables, matrices, vectors, pairs, sets and dictionaries, preserving large-integer precision and the upstream 10 KiB limit.
+- Make the DOS execution-results panel collapsible, add collapse-all/expand-all controls, and retain each document's folding state across new results and editor reopening within the current page.
+- Align execution-history headings, use separators and outline chevrons, and follow new output only when the latest result is expanded.
+- Show Notebook and DOS DolphinDB sessions together in Jupyter's Running panel; discover existing Notebook sessions without an open document and close DDB independently of the Python kernel.
+- Cancel lost discovery/status requests on transport disconnect, restart or disposal; rediscover Notebook sessions after reconnect and prevent stale callbacks from replacing new requests.
+- Reuse the upstream TextMate grammar with the VS Code TextMate/Oniguruma runtime and Light+/Dark+ colors for DOS and Notebook magics, including lazy notebook editors and language-metadata changes.
+- Replace filled action icons with theme-aware outlines and add distinct connection/data-explorer SVGs based on the official DolphinDB logo.
+- Add regression coverage for session discovery and cancellation, folding, quoted table insertion, structured previews, schema metadata and syntax-highlighting parity.
+
 ## 0.1.0a3 - 2026-09-11
 
 - Keep Notebook metadata and cell execution on the same kernel shell, excluding queued cell runtime from metadata timeouts; cancel pending requests on restart/disconnect and refresh workspace panels after reconnect.

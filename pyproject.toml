@@ -1,6 +1,6 @@
 [project]
 name = "dolphindb-extension"
-version = "0.1.0a3"
+version = "0.1.0a4"
 description = "Visual DolphinDB connection management for JupyterLab and Jupyter Notebook."
 readme = "README.md"
 authors = [

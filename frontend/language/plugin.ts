@@ -7,14 +7,15 @@ import { IExtensionSettings, type SettingsModel } from '../settings';
 import { LanguageEditors } from './editor';
 import { LanguageEngine } from './engine';
 import { ModuleIndex } from './modules';
+import { languageSupport } from '../dos/language';
 
 export const ILanguageEditors = new Token<LanguageEditors>('dolphindb-extension:ILanguageEditors');
 export default {
   id: 'dolphindb-extension:language', autoStart: true, provides: ILanguageEditors,
   requires: [IEditorExtensionRegistry, IRenderMimeRegistry, IExtensionSettings], optional: [ICommandPalette],
-  activate: (app, registry: IEditorExtensionRegistry, rendermime: IRenderMimeRegistry, settings: SettingsModel, palette: ICommandPalette | null) => {
+  activate: async (app, registry: IEditorExtensionRegistry, rendermime: IRenderMimeRegistry, settings: SettingsModel, palette: ICommandPalette | null) => {
     const modules = new ModuleIndex(app.serviceManager.contents);
-    const service = new LanguageEditors(new LanguageEngine(modules, () => settings.value.language), settings, rendermime);
+    const service = new LanguageEditors(new LanguageEngine(modules, () => settings.value.language), settings, rendermime, await languageSupport());
     registry.addExtension({ name: 'dolphindb-language-assistance', factory: ({ model }) => EditorExtensionRegistry.createImmutableExtension(service.extension(model)) });
     app.commands.addCommand('dolphindb-extension:refresh-modules', { label: 'DolphinDB: 刷新模块索引', execute: () => modules.refresh() });
     app.commands.addCommand('dolphindb-extension:definition', { label: 'DolphinDB: 跳转到定义', execute: () => service.active && service.jump(service.active.view, service.active.model) });

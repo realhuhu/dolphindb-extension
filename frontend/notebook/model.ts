@@ -305,6 +305,28 @@ export class NotebookConnection {
     }
   }
 
+  async previewVariable(name: string): Promise<DisplayValue> {
+    const generation = this.panelGeneration, revision = this.languageRevision, variables = this.variables;
+    if (!this.locked || !variables.some(variable => variable.name === name)) { throw new Error('变量预览暂不可用。'); }
+    const value = await this.metadata('variablePreview', { name }) as DisplayValue;
+    if (generation !== this.panelGeneration || revision !== this.languageRevision || this.variables !== variables || this.disposed) {
+      throw new Error('DDB 会话已变化。');
+    }
+    if (!value || (typeof value.text !== 'string' && !(Array.isArray(value.columns) && Array.isArray(value.rows)))) {
+      throw new Error('无法读取变量预览。');
+    }
+    return value;
+  }
+
+  async previewTableSchema(database: string, table: string): Promise<DisplayValue> {
+    const generation = this.panelGeneration, revision = this.languageRevision, databases = this.databases;
+    const value = await this.metadata('tableSchema', { database, table }) as DisplayValue;
+    if (generation !== this.panelGeneration || revision !== this.languageRevision || this.databases !== databases || this.disposed) {
+      throw new Error('DDB 会话已变化。');
+    }
+    return value;
+  }
+
   private rejectMetadata(): void {
     for (const pending of this.metadataRequests.values()) {
       pending.reject(new Error('DDB 会话已变化。'));

@@ -19,6 +19,7 @@ from jupyter_core.paths import jupyter_config_dir
 from .connections import ConnectionError, Credentials, ProfileStore, validate_profile
 
 COMM_TARGET = "dolphindb-extension:notebook"
+RUNNING_COMM_TARGET = "dolphindb-extension:running-session"
 SHELL_ATTRIBUTE = "_dolphindb_extension_magics"
 
 
@@ -92,6 +93,7 @@ class DolphinDBMagics(Magics):
         self.configuration_error: str | None = None
         self.requested_id: str | None = None
         self.comms: set = set()
+        self.running_comm = None
         self.lock = threading.RLock()
         self.previous: dict = {}
 
@@ -112,6 +114,43 @@ class DolphinDBMagics(Magics):
                 comm.send(self.state(error))
             except Exception:
                 self.comms.discard(comm)
+        # A disconnected frontend must never turn a successful SDK call into an error.
+        with suppress(Exception):
+            self.publish_running(error)
+
+    def publish_running(self, error: str | None = None) -> None:
+        """Expose a session through comm_info, even when no notebook view is open."""
+        kernel = getattr(self.shell, "kernel", None)
+        if kernel is None:
+            return
+        if self.session is None:
+            if self.running_comm is not None:
+                self.running_comm.close()
+                self.running_comm = None
+            return
+        if self.running_comm is None:
+            from comm import create_comm
+
+            # A passive comm is discovered via Jupyter's comm_info_request. It
+            # does not send comm_open to unrelated clients (e.g. ipywidgets).
+            comm = create_comm(target_name=RUNNING_COMM_TARGET, primary=False)
+            kernel.comm_manager.register_comm(comm)
+            self.running_comm = comm
+
+            def receive(message):
+                data = message.get("content", {}).get("data", {})
+                if not isinstance(data, dict):
+                    return
+                if data.get("kind") == "close":
+                    try:
+                        self.close()
+                    except Exception:
+                        self.publish("DDB 会话关闭失败，请重试。")
+                elif data.get("kind") == "status":
+                    self.publish_running()
+
+            comm.on_msg(receive)
+        self.running_comm.send({**self.state(error), "kind": "running-session"})
 
     def configure(self, data: dict) -> None:
         with self.lock:

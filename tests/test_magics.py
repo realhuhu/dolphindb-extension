@@ -11,6 +11,7 @@ from traitlets.config import Config
 from dolphindb_extension import load_ipython_extension, unload_ipython_extension
 from dolphindb_extension.magics import (
     COMM_TARGET,
+    RUNNING_COMM_TARGET,
     SHELL_ATTRIBUTE,
     load_notebook_extension,
     open_session,
@@ -126,6 +127,51 @@ def test_last_page_closure_releases_only_language_preview(magic):
     assert sessions[0].closed
     assert instance.preview_session is None
     assert instance.session is None
+
+
+def test_running_session_is_discoverable_without_a_view_and_closes_only_ddb(magic, monkeypatch):
+    import comm
+
+    shell, instance, sessions = magic
+    manager = comm.base_comm.CommManager()
+    messages = []
+
+    class RunningComm(comm.base_comm.BaseComm):
+        def publish_msg(self, msg_type, data=None, **kwargs):
+            messages.append((msg_type, data))
+
+    monkeypatch.setattr(comm, "create_comm", RunningComm)
+    monkeypatch.setattr(comm, "get_comm_manager", lambda: manager)
+    shell.kernel = SimpleNamespace(comm_manager=manager)
+    try:
+        frontend = Comm()
+        instance.open_comm(frontend, {})
+        instance.metadata("snapshot", {})
+        assert not manager.comms, "preview connections are not running execution sessions"
+        shell.user_ns["python_value"] = 42
+        instance.execute("ddb_value = 7")
+        marker = instance.running_comm
+        assert marker.target_name == RUNNING_COMM_TARGET
+        assert list(manager.comms.values()) == [marker]
+        assert all(kind != "comm_open" for kind, _ in messages)
+        assert PROFILE["password"] not in json.dumps(messages)
+        frontend.close()
+        assert not sessions[-1].closed
+        assert marker.comm_id in manager.comms, "closing the last notebook view must retain discovery"
+        marker.handle_msg({"content": {"data": {"kind": "status"}}})
+        assert messages[-1][1]["locked"] is True
+        marker.handle_msg({"content": {"data": {"kind": "close"}}})
+        assert sessions[-1].closed
+        assert instance.session is None and instance.running_comm is None
+        assert not manager.comms
+        assert messages[-1][0] == "comm_close"
+        assert shell.user_ns["python_value"] == 42
+        instance.execute("ddb_value = 8")
+        assert instance.running_comm.comm_id != marker.comm_id
+        assert len(manager.comms) == 1
+        instance.close()
+    finally:
+        del shell.kernel
 
 
 def test_cell_magic_captures_multiline_result_and_preserves_script(magic):

@@ -15,6 +15,7 @@ class DdbTableRenderer extends ReactWidget implements IRenderMime.IRenderer {
     this.value = data && Array.isArray(data.columns) && data.columns.every(column => typeof column === 'string')
       && Array.isArray(data.rows) && data.rows.every(row => Array.isArray(row) && row.every(cell => typeof cell === 'string'))
       ? { columns: data.columns, rows: data.rows.slice(0, 100), totalRows: typeof data.totalRows === 'number' ? data.totalRows : data.rows.length,
+        totalColumns: typeof data.totalColumns === 'number' ? data.totalColumns : undefined,
         sortRanks: Array.isArray(data.sortRanks) ? data.sortRanks.map(ranks =>
           Array.isArray(ranks) && ranks.length === data.rows!.length && ranks.every(Number.isFinite) ? ranks.slice(0, 100) : null) : undefined } : null;
     this.update();
@@ -23,6 +24,12 @@ class DdbTableRenderer extends ReactWidget implements IRenderMime.IRenderer {
   render(): React.ReactElement {
     const value = this.value;
     if (!value) { return <p role="alert">无法显示 DolphinDB 表格。</p>; }
+    return <ResultTable value={value}/>;
+  }
+}
+
+/** Shared by execution results, table dialogs and variable hover previews. */
+export function ResultTable({ value, showSummary = true }: { value: DisplayValue; showSummary?: boolean }): React.ReactElement {
     return <div className="ddb-result-grid">
       <Table rows={value.rows!.map((cells, index) => ({ key: String(index), data: { cells, index } }))}
         columns={value.columns!.map((name, index) => ({ id: String(index), label: name,
@@ -32,9 +39,8 @@ class DdbTableRenderer extends ReactWidget implements IRenderMime.IRenderer {
             return ranks ? ranks[a.index] - ranks[b.index] : (a.cells[index] ?? '').localeCompare(b.cells[index] ?? '');
           } }))}
         blankIndicator={() => '空表'}/>
-      <small>{value.totalRows} 行 · {value.columns!.length} 列{value.totalRows! > value.rows!.length ? ` · 显示前 ${value.rows!.length} 行` : ''}</small>
+      {showSummary && <small>{value.totalRows} 行 · {value.totalColumns ?? value.columns!.length} 列{value.totalRows! > value.rows!.length ? ` · 显示前 ${value.rows!.length} 行` : ''}</small>}
     </div>;
-  }
 }
 
 export function registerDdbRenderer(rendermime: IRenderMimeRegistry): void {

@@ -1,5 +1,6 @@
 import { Dialog, showDialog } from '@jupyterlab/apputils';
-import { addIcon, refreshIcon, settingsIcon, Button, FilterBox, InputGroup, ToolbarButtonComponent } from '@jupyterlab/ui-components';
+import { Button, FilterBox, InputGroup, ToolbarButtonComponent } from '@jupyterlab/ui-components';
+import { addIcon, refreshIcon, settingsIcon } from './icons';
 import { Checkbox, Toolbar, type CheckboxElement } from '@jupyter/react-components';
 import * as React from 'react';
 import { endpoint, type Draft, type Profile } from './api';
