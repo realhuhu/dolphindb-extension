@@ -1,9 +1,42 @@
 import * as React from 'react';
 import { Dialog, ReactWidget, showDialog, showErrorMessage } from '@jupyterlab/apputils';
 import { HTMLSelect, ReactiveToolbar, Toolbar, ToolbarButton, type LabIcon } from '@jupyterlab/ui-components';
+import { DisposableDelegate } from '@lumino/disposable';
 import type { ISignal } from '@lumino/signaling';
 import { Widget } from '@lumino/widgets';
 import { idleIcon, readyIcon, busyIcon, workspaceIcon } from '../icons';
+
+/** Guard the native DOS host toolbar without patching Jupyter's shared prototype. */
+export function guardToolbarDisposal(toolbar: Toolbar): DisposableDelegate {
+  if (!(toolbar instanceof ReactiveToolbar) || toolbar.onAfterShow !== ReactiveToolbar.prototype.onAfterShow) {
+    return new DisposableDelegate(() => {});
+  }
+  // Jupyter exposes no completion-aware overflow refresh. Keep this compatibility
+  // adapter limited to its existing limiter: invoke(true) performs both native
+  // measurement passes, whereas fit()/resize can skip or coalesce the second one.
+  const resizer = (toolbar as unknown as { _resizer?: {
+    stop(): Promise<void>; invoke(callTwice: boolean): Promise<unknown>;
+  } })._resizer;
+  if (!resizer || typeof resizer.stop !== 'function' || typeof resizer.invoke !== 'function') {
+    return new DisposableDelegate(() => {});
+  }
+  const afterShow = toolbar.onAfterShow;
+  let generation = 0, disposed = false;
+  const show = () => {
+    const current = ++generation;
+    const live = () => !disposed && !toolbar.isDisposed && toolbar.isVisible && current === generation;
+    void resizer.stop().then(() => {
+      if (live()) { return resizer.invoke(true); }
+    }).catch(error => {
+      if (live() && error !== undefined) { console.error('Unable to resize DolphinDB toolbar', error); }
+    });
+  };
+  toolbar.onAfterShow = show;
+  return new DisposableDelegate(() => {
+    disposed = true;
+    if (toolbar.onAfterShow === show) { toolbar.onAfterShow = afterShow; }
+  });
+}
 
 type ProfileOption = { id: string; name: string };
 export interface SessionControlsState {
@@ -52,6 +85,7 @@ class ConnectionPicker extends ReactWidget {
 
 /** Native toolbar sizing, overflow, buttons and focus handling for both document types. */
 export class SessionToolbar extends ReactiveToolbar {
+  private readonly toolbarGuard: DisposableDelegate;
   private closing = false;
   private picker: ConnectionPicker;
   private status = new Widget();
@@ -59,6 +93,7 @@ export class SessionToolbar extends ReactiveToolbar {
   private buttons: { button: ToolbarButton; action: SessionToolbarAction }[] = [];
   constructor(private options: { label: string; changed: ISignal<any, void>; state: () => SessionControlsState; actions: SessionToolbarAction[] }) {
     super();
+    this.toolbarGuard = guardToolbarDisposal(this);
     this.addClass('ddb-session-toolbar');
     this.node.setAttribute('aria-label', options.label);
     for (const action of options.actions) {
@@ -106,6 +141,7 @@ export class SessionToolbar extends ReactiveToolbar {
   }
   dispose(): void {
     if (this.isDisposed) { return; }
+    this.toolbarGuard.dispose();
     this.options.changed.disconnect(this.refresh, this);
     super.dispose();
   }

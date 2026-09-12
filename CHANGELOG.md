@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0b2 - 2026-09-12
+
+- Wait for a fresh kernel status handshake after Notebook reconnects before refreshing metadata; preserve the DDB session and cancel stale handshakes on disconnect, comm closure or disposal.
+- Prevent deferred toolbar callbacks from running after DOS tabs close; retain Jupyter's two-pass overflow measurement so restored background tabs show their controls correctly even when the toolbar width has not changed.
+
 ## 0.1.0b1 - 2026-09-11
 
 - Refresh unlocked DOS previews after editing saved connections, including password-only changes, while retaining locked execution and debug sessions.

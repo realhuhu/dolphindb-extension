@@ -33,6 +33,7 @@ function kernel({ state = {}, language = 'python', bootstrap } = {}) {
             this.emit({ profile: publicProfile, configuring: false, error: null });
           }
           if (message.kind === 'configuration-error') { this.emit({ configuring: false, error: 'Selection failed' }); }
+          return { done: Promise.resolve(), dispose() {} };
         },
         close() { this.closed = true; }, dispose() { this.isDisposed = true; },
       };
@@ -424,6 +425,106 @@ test('reconnecting refreshes panels even if the connection and lock state have n
   assert.equal(f.model.locked, true);
   f.context.statusChanged.emit('idle'); await tick();
   assert.equal(reads, 2, 'Metadata idle must not trigger a refresh loop');
+  f.model.dispose();
+});
+
+test('replayed idle and state cannot refresh panels until the reconnect handshake finishes', async () => {
+  const f = fixture({ current: kernel({ state: { profile: profile('default'), locked: true, sessionId: 'kept' } }) });
+  await tick();
+  const comm = f.current.comms[0], handshake = deferred();
+  const sent = [];
+  comm.send = message => { sent.push(message); return { done: handshake.promise, dispose() {} }; };
+  const metadata = f.model.metadata.bind(f.model);
+  let reads = 0;
+  f.model.metadata = async () => workspace(`revision-${++reads}`);
+  f.model.setPanelActive(true); await tick();
+  const identity = f.model.browserIdentity();
+  f.context.connectionStatusChanged.emit('connecting');
+  // Buffered messages from the old socket can restore idle before a fresh
+  // request has completed over the reconnected shell channel.
+  f.context.statusChanged.emit('idle'); comm.emit({}); await tick();
+  assert.equal(reads, 1);
+  f.context.connectionStatusChanged.emit('connected');
+  comm.emit({}); f.context.statusChanged.emit('idle'); await tick();
+  await assert.rejects(metadata('workspace'), /暂不可用/);
+  assert.deepEqual(sent.map(message => message.kind), ['status']);
+  assert.equal(reads, 1, 'neither a replayed idle nor the status reply alone makes the shell ready');
+  handshake.resolve(); await tick();
+  assert.equal(reads, 2);
+  assert.equal(f.model.variables[0].name, 'revision-2');
+  assert.equal(f.model.browserIdentity(), identity, 'reconnect must preserve the DDB session');
+  assert.equal(f.requests.length, 0, 'reconnect must not send credentials or configure the session');
+  f.context.statusChanged.emit('idle'); await tick();
+  assert.equal(reads, 2, 'the metadata idle must not start a refresh loop');
+  f.model.dispose();
+});
+
+test('another disconnect or disposal cancels the reconnect handshake and ignores its late completion', async () => {
+  for (const change of ['disconnect', 'dispose']) {
+    const f = fixture({ current: kernel({ state: { profile: profile('default'), locked: true } }) }); await tick();
+    const comm = f.current.comms[0], handshakes = [];
+    comm.send = () => {
+      const done = deferred();
+      const future = { done: done.promise, disposed: false, dispose() { this.disposed = true; } };
+      handshakes.push({ future, done }); return future;
+    };
+    let reads = 0;
+    f.model.metadata = async () => workspace(`revision-${++reads}`);
+    f.model.setPanelActive(true); await tick();
+    f.context.connectionStatusChanged.emit('connecting');
+    f.context.connectionStatusChanged.emit('connected');
+    if (change === 'dispose') { f.model.dispose(); }
+    else {
+      f.context.connectionStatusChanged.emit('connecting');
+      f.context.connectionStatusChanged.emit('connected');
+    }
+    assert.equal(handshakes[0].future.disposed, true);
+    handshakes[0].done.resolve(); await tick();
+    assert.equal(reads, 1);
+    if (change === 'disconnect') {
+      handshakes[1].done.resolve(); await tick();
+      assert.equal(reads, 2); f.model.dispose();
+    }
+  }
+});
+
+test('failed reconnect handshakes can retry attachment without replacing the locked DDB session', async () => {
+  for (const synchronous of [false, true]) {
+    const f = fixture({ current: kernel({ state: { profile: profile('default'), locked: true, sessionId: 'kept' } }) }); await tick();
+    const original = f.current.comms[0];
+    original.send = () => {
+      if (synchronous) { throw new Error('Cannot send'); }
+      return { done: Promise.reject(new Error('Kernel disconnected')), dispose() {} };
+    };
+    if (synchronous) { original.close = () => { throw new Error('Cannot close'); }; }
+    f.context.connectionStatusChanged.emit('connected'); await tick();
+    assert.equal(f.model.phase, 'error');
+    assert.equal(original.isDisposed, true);
+    assert.equal(f.model.reconnectRequest, null);
+    await f.model.initialize(); await tick();
+    assert.equal(f.model.phase, 'ready');
+    assert.equal(f.model.sessionId, 'kept');
+    assert.equal(f.model.locked, true);
+    assert.equal(f.requests.length, 0);
+    f.model.dispose();
+  }
+});
+
+test('closing a comm during reconnect cannot let an old handshake reset the replacement', async () => {
+  const f = fixture({ current: kernel({ state: { profile: profile('default'), locked: true, sessionId: 'kept' } }) }); await tick();
+  const original = f.current.comms[0], handshake = deferred();
+  const future = { done: handshake.promise, disposed: false, dispose() { this.disposed = true; } };
+  original.send = () => future;
+  f.context.connectionStatusChanged.emit('connected');
+  original.onClose();
+  assert.equal(future.disposed, true);
+  assert.equal(f.model.reconnecting, false);
+  await f.model.initialize(); await tick();
+  handshake.reject(new Error('Old comm closed')); await tick();
+  assert.equal(f.model.phase, 'ready');
+  assert.equal(f.model.sessionId, 'kept');
+  assert.equal(f.current.comms[1].isDisposed, false);
+  assert.equal(f.requests.length, 0);
   f.model.dispose();
 });
 

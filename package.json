@@ -1,6 +1,6 @@
 {
   "name": "dolphindb-extension",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Visual DolphinDB connection management for Jupyter",
   "license": "Apache-2.0",
   "private": true,
@@ -24,7 +24,7 @@
     "build": "tsc && jupyter-builder build .",
     "build:prod": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs tests/frontend/notebook.test.cjs tests/frontend/language.test.cjs tests/frontend/workspace.test.cjs tests/frontend/output.test.cjs tests/frontend/sessions.test.cjs tests/frontend/data.test.cjs tests/frontend/debugger.test.cjs tests/frontend/debugger-plugin.test.cjs"
+    "test": "node --experimental-strip-types --test tests/frontend/settings.test.ts tests/frontend/dos.test.cjs tests/frontend/notebook.test.cjs tests/frontend/language.test.cjs tests/frontend/workspace.test.cjs tests/frontend/toolbar.test.cjs tests/frontend/output.test.cjs tests/frontend/sessions.test.cjs tests/frontend/data.test.cjs tests/frontend/debugger.test.cjs tests/frontend/debugger-plugin.test.cjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.0",

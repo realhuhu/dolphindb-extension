@@ -1,6 +1,6 @@
 # dolphindb-extension 文档
 
-本目录对应当前源码。包版本为 `0.1.0b1`（Beta），版本变更见 [CHANGELOG](../CHANGELOG.md)。
+本目录对应当前源码。包版本为 `0.1.0b2`（Beta），版本变更见 [CHANGELOG](../CHANGELOG.md)。
 功能以本项目的实现和下面的迁移清单为准，不表示已经迁移原 VS Code 插件的全部功能。
 
 ## 开始使用

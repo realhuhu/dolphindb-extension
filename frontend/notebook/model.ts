@@ -43,6 +43,8 @@ export class NotebookConnection {
   private generation = 0;
   private configuration = 0;
   private initializing: Promise<void> | null = null;
+  private reconnecting = false;
+  private reconnectRequest: Kernel.IShellFuture | null = null;
   private disposed = false;
   private lastSnapshot;
   private lastSettings = '';
@@ -79,6 +81,8 @@ export class NotebookConnection {
   }
 
   private reset(): void {
+    this.cancelReconnect();
+    this.reconnecting = false;
     this.lastSettings = '';
     this.browserOwner = '';
     this.sessionId = '';
@@ -90,7 +94,11 @@ export class NotebookConnection {
     this.initializing = null;
     const comm = this.comm;
     this.comm = null;
-    if (comm && !comm.isDisposed) { comm.close(); comm.dispose(); }
+    if (comm && !comm.isDisposed) {
+      try { comm.close(); }
+      catch { /* A dead transport may reject close; the local observer still needs disposal. */ }
+      finally { comm.dispose(); }
+    }
     this.profile = null;
     this.locked = this.busy = this.loading = false;
     this.phase = 'waiting';
@@ -112,8 +120,43 @@ export class NotebookConnection {
     this.panelGeneration++;
     this.panelDirty = true;
     this.languageRevision++;
-    if (status === 'connected' && this.comm) { this.comm.send({ kind: 'status' }); }
-    else { this.rejectMetadata(); }
+    this.cancelReconnect();
+    this.reconnecting = status !== 'connected';
+    this.rejectMetadata();
+    if (status === 'connected' && this.comm) {
+      // Replayed idle/state messages can precede a usable shell channel. Wait
+      // for our fresh status request's idle before issuing metadata queries.
+      this.reconnecting = true;
+      try {
+        const future = this.comm.send({ kind: 'status' });
+        this.reconnectRequest = future;
+        void future.done.then(() => {
+          if (this.reconnectRequest !== future || this.disposed) { return; }
+          this.reconnectRequest = null;
+          this.reconnecting = false;
+          this.languageRevision++;
+          this.changed.emit();
+          void this.updatePanels();
+        }, error => {
+          if (this.reconnectRequest !== future || this.disposed) { return; }
+          this.reset();
+          this.phase = 'error';
+          this.notice = error instanceof Error ? error.message : 'DDB 连接恢复失败，请重试。';
+          this.changed.emit();
+        });
+      } catch (error) {
+        this.reset();
+        this.phase = 'error';
+        this.notice = error instanceof Error ? error.message : 'DDB 连接恢复失败，请重试。';
+        this.changed.emit();
+      }
+    }
+  }
+
+  private cancelReconnect(): void {
+    const future = this.reconnectRequest;
+    this.reconnectRequest = null;
+    future?.dispose();
   }
 
   initialize(): Promise<void> {
@@ -188,6 +231,8 @@ export class NotebookConnection {
       };
       comm.onClose = () => {
         if (!current() || this.comm !== comm) { return; }
+        this.cancelReconnect();
+        this.reconnecting = false;
         this.comm = null;
         this.clearPanels();
         this.rejectMetadata();
@@ -280,7 +325,7 @@ export class NotebookConnection {
 
   private updatePanels(): Promise<void> {
     if (this.panelRequest) { return this.panelRequest; }
-    if (!this.panelActive || !this.panelDirty || this.disposed || !this.profile || this.phase !== 'ready'
+    if (!this.panelActive || !this.panelDirty || this.disposed || this.reconnecting || !this.profile || this.phase !== 'ready'
       || this.loading || this.executing || this.context.session?.kernel?.status !== 'idle') { return Promise.resolve(); }
     this.panelDirty = false; this.panelLoading = true;
     const generation = this.panelGeneration, revision = this.languageRevision;
@@ -364,7 +409,7 @@ export class NotebookConnection {
   }
 
   metadata(operation: string, args: Record<string, string> = {}): Promise<unknown> {
-    if (!this.comm || this.phase !== 'ready' || this.loading || this.busy || this.context.session?.kernel?.status !== 'idle') {
+    if (!this.comm || this.reconnecting || this.phase !== 'ready' || this.loading || this.busy || this.context.session?.kernel?.status !== 'idle') {
       return Promise.reject(new Error('DDB 内核暂不可用。'));
     }
     const id = crypto.randomUUID();

@@ -24,6 +24,7 @@ import { projection } from '../language/regions';
 import { createDosToolbar, OutputPanel } from './views';
 import { registerDdbRenderer } from './output';
 import { ISessionWorkspace, type SessionWorkspace } from '../session/workspace';
+import { guardToolbarDisposal } from '../session/toolbar';
 import { captureVariableInsertion } from '../session/interactions';
 import { showTablePreview } from '../session/preview';
 import { NotebookSessions } from '../notebook/sessions';
@@ -108,6 +109,7 @@ export default {
     app.docRegistry.addWidgetExtension('Editor', {
       createNew(widget: EditorWidget, context) {
         if (!context.path.toLowerCase().endsWith('.dos')) { return new DisposableDelegate(() => {}); }
+        const toolbarGuard = guardToolbarDisposal(widget.toolbar);
         const model = manager.document(context.path);
         const unbindLanguage = languageEditors.bind(widget.content.editor.model, {
           path: () => context.path, source: () => getSource(widget), project: (source, offset) => projection(source, offset, true),
@@ -176,6 +178,7 @@ export default {
           workspace.sync();
         });
         return new DisposableDelegate(() => {
+          toolbarGuard.dispose();
           unbindLanguage();
           model.previewReady.disconnect(preview);
           model.changed.disconnect(resizeOutput);
