@@ -19,7 +19,7 @@
 在运行 Jupyter 的环境中执行：
 
 ```shell
-python -m pip install "jupyterlab>=4.2,<5" "dolphindb-extension[notebook]==0.1.0b2"
+python -m pip install "jupyterlab>=4.2,<5" "dolphindb-extension[notebook]==0.1.0b3"
 python -m jupyterlab
 ```
 

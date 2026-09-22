@@ -57,12 +57,13 @@ select id, price from t where price > 11
 
 首次运行前默认使用侧栏选择的连接，也可通过 Notebook 工具栏单独切换。第一次执行建立该
 Python 内核的 DolphinDB 会话并固定连接，后续 `%ddb` 和 `%%ddb` 共用会话变量；代码报错也保留会话。
+首次调用 `%ddb_session` 或 `%ddb_upload` 也会建立并固定同一个执行会话。
 关闭 Notebook 页面或刷新浏览器后，Python 内核和 DDB 会话仍可复用。执行 `%ddb_close` 或点击
 **关闭会话**释放 DDB 会话后可重新选连接；已有 Python 返回值变量仍保留在内核中。
 右侧数据库与变量面板在首次运行前预览所选连接的数据库；执行后自动显示该 Python 内核的 DDB
 会话变量，并在执行结束后刷新。表名点击插入 `loadTable(...)`，眼睛按钮按配置预览数据（默认前 100 行），预览不固定连接。
 关闭或重启 Python 内核会结束其 DDB 会话，也可以在 **正在运行的内核和终端 → DolphinDB 会话** 中只关闭 DDB 会话。
-会话列表通过 Jupyter comm 查询已有会话，关闭 Notebook 页面或刷新后仍能发现；未运行 DDB 的 Notebook 不会列入。
+会话列表通过 Jupyter comm 查询已有会话，关闭 Notebook 页面或刷新后仍能发现；未执行 DDB、获取会话或上传数据的 Notebook 不会列入。
 如果两个 Notebook 显式共用同一个 Python 内核，它们也共用该 DDB 会话；DOS 文件会话保持独立。
 
 Notebook 由 Python 内核通过原生 TCP / SSL 连接 DolphinDB，内核所在机器需要能访问配置的地址；
@@ -82,6 +83,49 @@ aaa = %ddb 1 + 1
 手动选择读取 Jupyter 配置目录中的已保存连接和系统凭据库；可用 `DOLPHINDB_CONNECTIONS_DIR`
 环境变量指定自定义连接目录。服务内存中的临时密码需通过 Notebook 工具栏传入。
 `%ddb_connect` 不带参数时显示当前连接和状态，不显示密码。
+
+## 获取原生 SDK 会话
+
+使用不带参数的 `%ddb_session` 获取当前 Python 内核的 DolphinDB SDK `Session` 对象：
+
+```python
+session = %ddb_session
+result = session.run("1 + 1")  # 2，普通 Python 返回值
+
+session.run("x = 42")
+x = %ddb x  # 42，与 %ddb / %%ddb 共用同一个会话
+```
+
+没有执行会话时，按 Notebook 当前选中的连接创建并固定会话，无须先执行 `%ddb`；
+独立 IPython 中使用 `%ddb_connect` 选定的连接，或已保存的默认连接。重复调用返回同一个 SDK 对象，
+不会执行 DolphinDB 脚本。连接正在准备、配置失败或无法连接时，单元格报告错误，不会改用其他连接。
+此对象属于当前 Python 内核，不是 DOS 文件会话，也不是侧栏用于预览的临时会话。
+
+直接调用 SDK 方法不经过 `%ddb` 的执行包装；需要同步侧栏数据时，可点击数据库与变量面板的刷新按钮。
+使用 `%ddb_close` 或工具栏关闭会话，避免直接调用 `session.close()` / `session.connect()` 改变插件管理的连接。
+关闭后原 Python 变量仍引用已关闭对象；重新运行 `session = %ddb_session` 获取新会话。
+
+## 上传 Python 对象
+
+`%ddb_upload` 将 Python 字典交给当前共享会话的 `session.upload(...)`。
+字典的键是 DDB 变量名，值是要上传的 Python 对象；支持字典表达式或已有字典变量：
+
+```python
+import pandas as pd
+
+df = pd.DataFrame({"id": [1, 2], "price": [10.5, 20.0]})
+%ddb_upload {"prices": df, "threshold": 15.0}
+result = %ddb select * from prices where price > threshold
+
+payload = {"prices": df}
+uploaded = %ddb_upload payload  # 获取 SDK upload 的原始返回值
+```
+
+首次上传会按当前选择创建并固定连接，后续与 `%ddb`、`%%ddb`、`%ddb_session` 共用会话。
+Python 对象原样传入 SDK，由 SDK 完成类型转换（例如 DataFrame 转为 DDB 表），不做 JSON 或字符串转换。
+参数按调用处的 Python 作用域求值，函数参数和局部变量优先于 Notebook 同名全局变量，字典推导式同样适用。
+不做 IPython 的 `$` / 花括号插值；上传的返回值使用原生 Python 显示。
+上传纳入插件的忙碌状态、预览缓存失效和执行后面板刷新流程；上传失败时仍保留会话，并在单元格中显示错误。
 
 ## 结果展示规则
 
@@ -115,4 +159,4 @@ ddb_show(a)  # 显式打开自定义数据浏览组件
 
 同一 Notebook 的 **New View for Notebook** 视图共享模型和内核，补全与 F12 导航跟随发起请求的编辑器。关闭某个视图不会移除其他视图的语言绑定。不同 Notebook 若主动选择同一个 Python 内核，也共用该内核的 Python 变量和 DDB 会话。
 
-`%ddb_connect`、`%ddb_close` 和 `ddb_show` 不是普通 Python 解释器的独立连接 API；在 `.py` 程序中直接使用官方 DolphinDB Python SDK。
+`%ddb_connect`、`%ddb_session`、`%ddb_upload`、`%ddb_close` 和 `ddb_show` 不是普通 Python 解释器的独立连接 API；在 `.py` 程序中直接使用官方 DolphinDB Python SDK。

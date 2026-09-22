@@ -3,7 +3,7 @@
 在 JupyterLab 和 Jupyter Notebook 7 中使用 DolphinDB：可视化连接管理、DOS 文件执行与调试、Notebook magics，以及数据浏览器。
 核心连接、语言服务、语法和调试协议复用 [DolphinDB 官方 VS Code 插件](https://github.com/dolphindb/vscode-extension)，界面与会话按 Jupyter 方式集成。
 
-当前包版本为 **0.1.0b2（Beta）**。本仓库文档对应当前源码；版本变更见 [CHANGELOG](https://github.com/realhuhu/dolphindb-extension/blob/main/CHANGELOG.md)。
+当前包版本为 **0.1.0b3（Beta）**。本仓库文档对应当前源码；版本变更见 [CHANGELOG](https://github.com/realhuhu/dolphindb-extension/blob/main/CHANGELOG.md)。
 已实现能力与剩余差异见 [迁移清单](https://github.com/realhuhu/dolphindb-extension/blob/main/docs/migration.md)。
 
 ## 安装与开始使用
@@ -11,7 +11,7 @@
 需要 Python 3.10+、JupyterLab 4.2+ 或 Notebook 7.2+，以及可访问的 DolphinDB Server。
 
 ```shell
-python -m pip install "jupyterlab>=4.2,<5" "dolphindb-extension[notebook]==0.1.0b2"
+python -m pip install "jupyterlab>=4.2,<5" "dolphindb-extension[notebook]==0.1.0b3"
 python -m jupyterlab
 ```
 

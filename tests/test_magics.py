@@ -26,6 +26,7 @@ class Session:
     def __init__(self):
         self.result = None
         self.calls = []
+        self.uploads = []
         self.closed = False
         self.error = None
 
@@ -37,6 +38,12 @@ class Session:
 
     def close(self):
         self.closed = True
+
+    def upload(self, objects):
+        self.uploads.append(objects)
+        if self.error:
+            raise self.error
+        return self.result
 
 
 class Comm:
@@ -90,6 +97,151 @@ def test_assignment_returns_original_sdk_object(magic, value):
     assert shell.display_formatter.format(shell.user_ns["aaa"]) == native
     assert sessions[0].calls[-1] == "select * from prices"
     assert len(sessions) == 1
+
+
+def test_session_magic_returns_shared_sdk_session_without_running_code(magic, monkeypatch):
+    shell, instance, sessions = magic
+    comm = Comm()
+    instance.open_comm(comm, {})
+    displayed = []
+    monkeypatch.setattr(instance, "show_result", displayed.append)
+    assert shell.run_cell("session=%ddb_session", store_history=False).success
+    session = shell.user_ns["session"]
+    assert session is instance.session is sessions[0]
+    assert session.calls == []
+    assert instance.session_id and instance.state()["locked"]
+    assert not instance.busy and comm.messages[-1]["locked"]
+    assert PROFILE["password"] not in json.dumps(comm.messages)
+    with pytest.raises(UsageError, match="固定"):
+        instance.configure({**PROFILE, "name": "Another"})
+    session.result = 42
+    assert shell.run_cell('direct=session.run("x=42; x")\nvia_magic=%ddb x', store_history=False).success
+    assert shell.run_cell("again=%ddb_session", store_history=False).success
+    assert shell.user_ns["again"] is session
+    assert shell.user_ns["direct"] == shell.user_ns["via_magic"] == 42
+    assert session.calls == ["x=42; x", "x"]
+    assert shell.run_cell("%ddb_session", store_history=False).success
+    assert displayed == [], "SDK sessions must use Python's ordinary output, not the DDB renderer"
+    assert len(sessions) == 1
+
+
+def test_session_magic_replaces_preview_and_reopens_after_explicit_close(magic):
+    shell, instance, sessions = magic
+    instance.metadata("snapshot", {})
+    preview = instance.preview_session
+    first = shell.run_line_magic("ddb_session", "")
+    first_id = instance.session_id
+    assert preview.closed and first is not preview
+    assert instance.preview_session is None
+    assert shell.run_cell("%ddb_close", store_history=False).success
+    assert first.closed and not instance.state()["locked"]
+    second = shell.run_line_magic("ddb_session", "")
+    assert second is not first and not second.closed
+    assert instance.session_id != first_id
+    assert second.calls == [] and len(sessions) == 3
+
+
+def test_session_magic_loads_default_profile_and_recovers_after_connection_failure(magic, monkeypatch):
+    shell, instance, sessions = magic
+    instance.profile = None
+    monkeypatch.setattr("dolphindb_extension.magics.saved_connection", lambda: PROFILE.copy())
+
+    def fail(profile):
+        raise UsageError("Connection failed")
+
+    with monkeypatch.context() as failing:
+        failing.setattr("dolphindb_extension.magics.open_session", fail)
+        with pytest.raises(UsageError, match="Connection failed"):
+            shell.run_line_magic("ddb_session", "")
+    assert not instance.busy and not instance.state()["locked"] and not instance.session_id
+    assert shell.run_line_magic("ddb_session", "") is sessions[0]
+    assert instance.profile == PROFILE
+
+
+@pytest.mark.parametrize("line", ["other", "--new", "{unused}"])
+def test_session_magic_rejects_arguments_before_connecting(magic, line):
+    shell, instance, sessions = magic
+    shell.user_ns["unused"] = ""
+    with pytest.raises(UsageError, match="不接受参数"):
+        shell.run_line_magic("ddb_session", line)
+    assert not sessions and not instance.state()["locked"]
+
+
+def test_upload_magic_creates_shared_session_and_preserves_python_objects(magic, monkeypatch):
+    shell, instance, sessions = magic
+    frame = pd.DataFrame({"price": [1.25, 2.5]})
+    array = np.array([1, 2, 3], dtype=np.int64)
+    shell.user_ns.update(df=frame, vector=array)
+    displayed = []
+    monkeypatch.setattr(instance, "show_result", displayed.append)
+    comm = Comm()
+    instance.open_comm(comm, {})
+    assert shell.run_cell('%ddb_upload {"prices": df, "values": vector, "literal": "$df {vector}"}',
+                          store_history=False).success
+    session = sessions[0]
+    assert session.uploads[0]["prices"] is frame
+    assert session.uploads[0]["values"] is array
+    assert session.uploads[0]["literal"] == "$df {vector}"
+    assert session.calls == [] and instance.state()["locked"] and not instance.busy
+    assert any(message["busy"] for message in comm.messages) and not comm.messages[-1]["busy"]
+    assert comm.messages[-1]["locked"]
+    assert shell.run_line_magic("ddb_session", "") is session
+    session.result = object()
+    payload = {"prices": frame}
+    shell.user_ns["payload"] = payload
+    instance.browse_cache["old page"] = object()
+    assert shell.run_cell("uploaded = %ddb_upload payload", store_history=False).success
+    assert shell.user_ns["uploaded"] is session.result
+    assert session.uploads[-1] is payload and not instance.browse_cache
+    assert shell.run_cell("result = %ddb prices", store_history=False).success
+    assert session.calls == ["prices"] and len(sessions) == 1
+    assert displayed == []
+
+
+@pytest.mark.parametrize("expression", [
+    '{"value": value, "shared": shared}',
+    "local_payload",
+    '{key: value if key == "value" else shared for key in ("value", "shared")}',
+])
+def test_upload_magic_uses_calling_function_locals_before_notebook_globals(magic, expression):
+    shell, _, sessions = magic
+    shell.user_ns.update(value=1, shared=7)
+    code = (
+        'def upload_local(value):\n'
+        '    local_payload = {"value": value, "shared": shared}\n'
+        f'    %ddb_upload {expression}\n'
+        'upload_local(42)\n'
+    )
+    assert shell.run_cell(code, store_history=False).success
+    assert sessions[0].uploads == [{"value": 42, "shared": 7}]
+    assert shell.user_ns["value"] == 1
+    assert "local_payload" not in shell.user_ns
+
+
+@pytest.mark.parametrize("expression, error", [
+    ("", UsageError), ("[]", UsageError), ("42", UsageError), ("{1: 2}", UsageError),
+    ('{"": 2}', UsageError), ("missing_object", NameError), ("{", SyntaxError),
+])
+def test_upload_magic_rejects_invalid_input_before_connecting(magic, expression, error):
+    shell, instance, sessions = magic
+    with pytest.raises(error):
+        shell.run_line_magic("ddb_upload", expression)
+    assert not sessions and not instance.state()["locked"]
+
+
+def test_upload_error_preserves_session_and_clears_busy_state_and_stale_pages(magic):
+    shell, instance, sessions = magic
+    session = shell.run_line_magic("ddb_session", "")
+    session_id = instance.session_id
+    session.error = RuntimeError("Unsupported upload type")
+    instance.browse_cache["old page"] = object()
+    with pytest.raises(RuntimeError, match="Unsupported upload type"):
+        shell.run_line_magic("ddb_upload", '{"data": object()}')
+    assert instance.session is session and instance.session_id == session_id
+    assert not instance.busy and not instance.browse_cache and not session.closed
+    session.error = None
+    shell.run_line_magic("ddb_upload", '{"data": 42}')
+    assert session.uploads[-1] == {"data": 42} and len(sessions) == 1
 
 
 @pytest.mark.parametrize("code", ["%ddb prices", "%%ddb\nprices", "previous = 42\n%ddb prices"])
@@ -337,32 +489,40 @@ def test_comm_closure_keeps_session_and_never_broadcasts_credentials(magic):
     assert not second.messages[-1]["locked"]
 
 
-def test_pending_or_failed_configuration_cannot_run_previous_connection(magic):
+@pytest.mark.parametrize("method, code", [
+    ("execute", "writeToDatabase()"), ("ddb_session", ""), ("ddb_upload", '{"data": 42}'),
+])
+def test_pending_or_failed_configuration_cannot_run_previous_connection(magic, method, code):
     _, instance, sessions = magic
+    run = getattr(instance, method)
     comm = Comm()
     instance.open_comm(comm, {})
     comm.receive({"kind": "prepare", "connectionId": "new-selection"})
     assert instance.state()["requestedId"] == "new-selection"
     with pytest.raises(UsageError, match="准备"):
-        instance.execute("writeToDatabase()")
+        run(code)
     comm.receive({"kind": "configuration-error"})
     with pytest.raises(UsageError, match="所选连接"):
-        instance.execute("writeToDatabase()")
+        run(code)
     assert not sessions
     comm.receive({"kind": "configure", "profile": PROFILE})
-    instance.execute("1 + 1")
+    run(code)
     assert len(sessions) == 1
 
 
-def test_notebook_bootstrap_waits_for_comm_configuration(magic):
+@pytest.mark.parametrize("method, code", [
+    ("execute", "writeToDatabase()"), ("ddb_session", ""), ("ddb_upload", '{"data": 42}'),
+])
+def test_notebook_bootstrap_waits_for_comm_configuration(magic, method, code):
     shell, instance, sessions = magic
+    run = getattr(instance, method)
     instance.profile = None
     load_notebook_extension(shell)
     with pytest.raises(UsageError, match="准备"):
-        instance.execute("writeToDatabase()")
+        run(code)
     assert not sessions
     instance.configure(PROFILE)
-    instance.execute("1 + 1")
+    run(code)
     assert len(sessions) == 1
 
 
@@ -410,6 +570,8 @@ def test_load_is_idempotent_and_unload_closes_session_and_unregisters_comm(magic
     unload_ipython_extension(shell)
     assert sessions[-1].closed
     assert "ddb" not in shell.magics_manager.magics["line"]
+    assert "ddb_session" not in shell.magics_manager.magics["line"]
+    assert "ddb_upload" not in shell.magics_manager.magics["line"]
     del shell.kernel
 
 

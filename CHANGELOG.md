@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0b3 - 2026-09-22
+
+- Add `session = %ddb_session` to obtain the Notebook's shared native DolphinDB SDK session, creating and locking the selected connection when needed without executing a script.
+- Add `%ddb_upload {"name": value}` to upload Python objects through the shared SDK session with normal execution state updates and preview cache invalidation; resolve arguments in the caller's local scope and preserve the SDK return value for Python assignment.
+
 ## 0.1.0b2 - 2026-09-12
 
 - Wait for a fresh kernel status handshake after Notebook reconnects before refreshing metadata; preserve the DDB session and cancel stale handshakes on disconnect, comm closure or disposal.

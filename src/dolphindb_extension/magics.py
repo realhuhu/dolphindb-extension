@@ -10,11 +10,18 @@ import os
 import shlex
 import threading
 from argparse import ArgumentTypeError
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from IPython.core.error import UsageError
-from IPython.core.magic import Magics, line_cell_magic, line_magic, magics_class, no_var_expand
+from IPython.core.magic import (
+    Magics,
+    line_cell_magic,
+    line_magic,
+    magics_class,
+    needs_local_scope,
+    no_var_expand,
+)
 from IPython.core.magic_arguments import argument, magic_arguments
 from jupyter_core.paths import jupyter_config_dir
 
@@ -257,9 +264,9 @@ class DolphinDBMagics(Magics):
                 return
         self.publish()
 
-    def execute(self, code: str):
-        if not code.strip():
-            raise UsageError("请在 %ddb 后填写代码，或使用 %%ddb 执行多行代码。")
+    @contextmanager
+    def _execution_session(self):
+        """Acquire the kernel's execution session and publish its lifecycle state."""
         with self.lock:
             if self.configuring:
                 raise UsageError("DDB 连接正在准备，请等待 Notebook 工具栏就绪后执行。")
@@ -279,12 +286,44 @@ class DolphinDBMagics(Magics):
                     from uuid import uuid4
                     self.session_id = uuid4().hex
                     self.publish()
-                # Return the object itself: IPython's assignment syntax captures this value.
-                self.browse_cache.clear()
-                return self.session.run(code)
+                yield self.session
             finally:
                 self.busy = False
                 self.publish()
+
+    def execute(self, code: str):
+        if not code.strip():
+            raise UsageError("请在 %ddb 后填写代码，或使用 %%ddb 执行多行代码。")
+        with self._execution_session() as session:
+            # Return the object itself: IPython's assignment syntax captures this value.
+            self.browse_cache.clear()
+            return session.run(code)
+
+    @line_magic
+    @no_var_expand
+    def ddb_session(self, line: str):
+        """Return the shared SDK Session, connecting if needed: session = %ddb_session."""
+        if line.strip():
+            raise UsageError("%ddb_session 不接受参数。用法：session = %ddb_session")
+        with self._execution_session() as session:
+            return session
+
+    @line_magic
+    @no_var_expand
+    @needs_local_scope
+    def ddb_upload(self, line: str, local_ns: dict | None = None):
+        """Upload a Python dictionary to the shared session: %ddb_upload {"prices": df}."""
+        if not line.strip():
+            raise UsageError('用法：%ddb_upload {"DDB变量名": Python对象}，或 %ddb_upload 字典变量')
+        scope = self.shell.user_ns if local_ns is None else local_ns
+        # Comprehensions resolve free names through globals, so include caller locals there too.
+        namespace = {**self.shell.user_global_ns, **self.shell.user_ns, **scope}
+        objects = eval(line, namespace, scope)
+        if not isinstance(objects, dict) or any(not isinstance(name, str) or not name for name in objects):
+            raise UsageError("%ddb_upload 需要字典，键必须是非空的 DolphinDB 变量名字符串。")
+        with self._execution_session() as session:
+            self.browse_cache.clear()
+            return session.upload(objects)
 
     @line_cell_magic
     @no_var_expand
